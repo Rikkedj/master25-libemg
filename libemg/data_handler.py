@@ -558,8 +558,36 @@ class OfflineDataHandler(DataHandler):
 
         return new_odh
     
-    def visualize():
-        pass
+    # Made by me
+    def visualize(self, block=True, title="Offline Data Visualization", time=None): # have a time for how long the data is sampled - could be found in data collection panel, saved in media folder
+        """Visualizes the data stored in the OfflineDataHandler object. This method will plot the data in a grid format where each channel is plotted in a separate subplot."""
+        if block:
+            self._visualize(title=title)
+        else: 
+            p = Process(target=self._visualize, args=(title, time,), daemon=True)
+            p.start()
+
+    def _visualize(self, title="Offline Data Visualization", time=None):
+        num_samples = self.data[0].shape[0] # data[0] is the emg data
+        num_channels = self.data[0].shape[1]
+        rep_data = self.data[0]
+        sampling_rate = self._get_sampling_rate(self.data[0], time)
+        #samples = np.arange(num_samples) 
+        time_axis = np.arange(num_samples) / sampling_rate
+
+        fig, axes = plt.subplots(num_channels, 1, figsize=(10, 2 * num_channels), sharex=True)
+        fig.suptitle(title, fontsize=16) 
+        #plt.figure(figsize=(10, 5))
+        for i in range(num_channels):
+            axes[i].plot(time_axis, rep_data[:, i], label=f'Channel {i+1}')
+            axes[i].set_ylabel(f"Ch {i+1}")
+            axes[i].legend()
+            axes[i].grid(True)
+
+            #plt.plot(samples, rep_data[:,i], label=f'Channel {i+1}')
+        axes[-1].set_xlabel("Time [s]")
+        plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout for title
+        plt.show()
 
 
 class OnlineDataHandler(DataHandler):

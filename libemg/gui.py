@@ -95,7 +95,8 @@ class GUI:
 
         with dpg.viewport_menu_bar():
             with dpg.menu(label="File"):
-                dpg.add_menu_item(label="Exit")
+                dpg.add_menu_item(label="Exit", callback=self._exit_window_callback)
+
                 
             with dpg.menu(label="Data"):
                 dpg.add_menu_item(label="Collect Data", callback=self._data_collection_callback)
@@ -111,7 +112,11 @@ class GUI:
 
             # with dpg.menu(label="HCI"):
                 # dpg.add_menu_item(label="Fitts Law", callback=self._fitts_law_callback)
-
+    
+    def _exit_window_callback(self):
+        #self.clean_up_on_kill = True
+        dpg.stop_dearpygui()
+    
     def _data_collection_callback(self):
         panel_arguments = list(inspect.signature(DataCollectionPanel.__init__).parameters)
         passed_arguments = {i: self.args[i] for i in self.args.keys() if i in panel_arguments}

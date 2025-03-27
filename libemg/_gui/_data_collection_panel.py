@@ -12,6 +12,7 @@ from ._utils import Media, set_texture, init_matplotlib_canvas, matplotlib_to_nu
 
 import threading
 import matplotlib.pyplot as plt
+from libemg.data_handler import OfflineDataHandler, RegexFilter
 
 
 class DataCollectionPanel:
@@ -21,7 +22,7 @@ class DataCollectionPanel:
                  media_folder='media/',
                  data_folder='data/',
                  rest_time=2,
-                 auto_advance=True,
+                 auto_advance=False,
                  exclude_files=[],
                  gui = None,
                  video_player_width = 720,
@@ -131,7 +132,7 @@ class DataCollectionPanel:
     def gather_media(self):
         # find everything in the media folder
         files = os.listdir(self.media_folder)
-        files = sorted(files)
+        files = sorted(files) # Consider removing this line, or sorting in another way
         labels_files = [file for file in files if file.endswith(('.txt', '.csv'))]
         files = [file for file in files if file.endswith((".gif",".png",".mp4","jpg"))]
         self.num_motions = len(files)
@@ -208,9 +209,13 @@ class DataCollectionPanel:
             with dpg.group(horizontal=True):
                 dpg.add_spacer(tag="__dc_continue_spacer", height=20, width=self.video_player_width/2+30 - (7*len("Continue"))/2)
                 dpg.add_button(tag="__dc_continue_button", label="Continue", callback=self.continue_collection_callback)
+            with dpg.group(horizontal=True): # Added by me - meant for showing plot of data collected after one rep
+                dpg.add_spacer(tag="__dc_recent_spacer", height=20, width=self.video_player_width/2+30 - (7*len("Show Recent Data"))/2)
+                dpg.add_button(tag="__dc_recent_data", label="Show Recent Data", callback=self.recent_data_callback)
             dpg.hide_item(item="__dc_redo_button")
             dpg.hide_item(item="__dc_continue_button")
-                
+            dpg.hide_item(item="__dc_recent_data") # Added by me
+            
         
         # dpg.set_primary_window("__dc_collection_window", True)
 
@@ -257,6 +262,8 @@ class DataCollectionPanel:
                 self.advance = False
                 dpg.show_item(item="__dc_redo_button")
                 dpg.show_item(item="__dc_continue_button")
+                dpg.show_item(item="__dc_recent_data") # Added by me
+                dpg.set_item_user_data("__dc_recent_data", (media_list[self.i-1][2], media_list[self.i-1][3], media_list[self.i-1][4])) # Added by me . Give the button the class index, rep index, and rep time for the visualize function
                 while not self.advance:
                     time.sleep(0.1)
                     dpg.configure_app(manual_callback_management=True)
@@ -273,12 +280,36 @@ class DataCollectionPanel:
             self.i      = self.i - 1 
         dpg.hide_item(item="__dc_redo_button")
         dpg.hide_item(item="__dc_continue_button")
+        dpg.hide_item(item="__dc_recent_data") # Added by me 
         self.advance = True
     
     def continue_collection_callback(self):
         dpg.hide_item(item="__dc_redo_button")
         dpg.hide_item(item="__dc_continue_button")
+        dpg.hide_item(item="__dc_recent_data") # Added by me 
         self.advance = True
+
+    # Added by me
+    def recent_data_callback(self): # Added by me - meant for showing plot of data collected after one rep
+        dataset_folder = self.output_folder
+        class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
+        if class_num is None or rep_num is None:
+            raise ValueError("No data to visualize")
+        regex_filters = [ 
+            RegexFilter(left_bound=f'/C_{class_num}_R_', right_bound='_emg.csv', values=[str(rep_num)], description='reps')
+        ]
+
+        self.offline_dh = OfflineDataHandler()
+        self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
+
+        self._plot_thread = threading.Thread(target=self._plot_data_helper, args=(f"Recent Data - Class: {class_num}, Rep: {rep_num}", sampling_time, ))
+        self._plot_thread.start()
+
+    # Added by me 
+    def _plot_data_helper(self, title, time):
+        self.offline_dh.visualize(block=False, title=title, time=time)
+
+
 
     def play_collection_visual(self, media, active=True):
         if active:

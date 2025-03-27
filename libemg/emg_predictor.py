@@ -1094,6 +1094,7 @@ class OnlineEMGRegressor(OnlineStreamer):
         super(OnlineEMGRegressor, self).__init__(offline_regressor, window_size, window_increment, online_data_handler, file_path,
                                                  file, smm, smm_items, features, port, ip, std_out, tcp, feature_queue_length)
         self.smi = smm_items
+        #self.visualize_signal = Event() # added by me
         
     def run(self, block=True):
         """Runs the regressor - continuously streams predictions over UDP or TCP.
