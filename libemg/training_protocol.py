@@ -34,7 +34,16 @@ class TrainingProtocol:
             'diagonal_1': (1, 1),               # Diagonal movement (↗)
             'diagonal_2': (1, -1),              # Diagonal movement (↘)
         }
-
+        # TODO: Add images the simultanous gestures
+        self.axis_images = {
+            'N': PILImage.open(Path('images/gestures', 'pronation.png')),
+            'S': PILImage.open(Path('images/gestures', 'supination.png')),
+            'E': PILImage.open(Path('images/gestures', 'hand_open.png')),
+            'W': PILImage.open(Path('images/gestures', 'hand_close.png')),
+            'NE': PILImage.open(Path('images/gestures', 'pronation.png')), # need to change this to video of simultanous gestures
+            'NW': PILImage.open(Path('images/gestures', 'supination.png')) # need to change this to video of simultanous gestures
+        }
+        
         self.window = None
         self.initialize_ui()
         self.window.mainloop()
@@ -161,7 +170,7 @@ class TrainingProtocol:
         # set up online model, give as input to gui??
         training_ui = GUI(self.odh, args=args, width=1000, height=1000, gesture_height=700, gesture_width=700)
         training_ui.download_gestures([1,2,3,4,5], "images/") # Add some images for simultanous gestures here
-        #self.create_animation()
+        self.create_animation()
         # maybe have a sepearte window where in GUI where you user can give parameters before making animation?           
         training_ui.start_gui()
         self.initialize_ui()
@@ -173,13 +182,14 @@ class TrainingProtocol:
         else:
            args = {'media_folder': 'images/', 'data_folder': Path('data', 'classification').absolute().as_posix()}
 
-        model_ui = ML_GUI(online_data_handler=self.odh, regression_selected=self.regression_selected(), model_str=self.model_str.get(), args=args)
+        model_ui = ML_GUI(online_data_handler=self.odh, regression_selected=self.regression_selected(), model_str=self.model_str.get(), axis_images=self.axis_images, args=args)
         model_ui.start_gui()
         self.initialize_ui()
 
 
     def create_animation(self):
         """Creates animations for different motor functions."""
+        # self.motor_functions is defined in __init__
         motor_functions = {
             'hand_open_close': (1, 0),          # Movement along x-axis
             'pronation_supination': (0, 1),     # Movement along y-axis
@@ -187,16 +197,6 @@ class TrainingProtocol:
             'diagonal_2': (1, -1),              # Diagonal movement (↘)
         }
 
-        # TODO: Add images the simultanous gestures
-        axis_images = {
-            'N': PILImage.open(Path('images/gestures', 'pronation.png')),
-            'S': PILImage.open(Path('images/gestures', 'supination.png')),
-            'E': PILImage.open(Path('images/gestures', 'hand_open.png')),
-            'W': PILImage.open(Path('images/gestures', 'hand_close.png')),
-            'NE': PILImage.open(Path('images/gestures', 'pronation.png')), # need to change this to video of simultanous gestures
-            'NW': PILImage.open(Path('images/gestures', 'supination.png')) # need to change this to video of simultanous gestures
-        }
-        
         for mf, (x_factor, y_factor) in motor_functions.items():
             output_filepath = Path(f'animation/collection_{mf}.mp4').absolute()
             if output_filepath.exists():
@@ -209,7 +209,7 @@ class TrainingProtocol:
             # Apply movement transformation
             coordinates = np.hstack((x_factor * base_motion, y_factor * base_motion))
 
-            scatter_animator_x = ScatterPlotAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_images=axis_images, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
+            scatter_animator_x = ScatterPlotAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_images=self.axis_images, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
             scatter_animator_x.save_plot_video(coordinates, title=f'Regression Training - {mf}', save_coordinates=True, verbose=True)
 
         # # Original X and Y DOFs

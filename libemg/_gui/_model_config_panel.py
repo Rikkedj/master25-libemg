@@ -240,7 +240,7 @@ class ModelConfigPanel:
             self.stop_prediction_plot()
 
         self.configuration["running"] = True
-        plotter = PredictionPlotter()
+        plotter = PredictionPlotter(self.gui.axis_images)
         self.plot_process = Process(target=plotter.run, args=(self.configuration,self.prediction_queue)) #self.plot_process = Process(target=self.plotter, args=(self.configuration, self.prediction_queue))
         self.plot_process.start()
 
@@ -564,17 +564,18 @@ class ModelConfigPanel:
 
 
 class PredictionPlotter:
-    def __init__(self):
-        # self.config = config
-        # self.pred_queue = pred_queue
-        self.history = deque(maxlen=1000)
-        self.tale = []
-        self.axis_images = { # Make that this is the same as the images in the training, dynamically. May not need the simultanous control here though
+    def __init__(self, 
+                 axis_images={ 
             'N': PILImage.open(Path('images/gestures', 'hand_open.png')),
             'S': PILImage.open(Path('images/gestures', 'hand_close.png')),
             'E': PILImage.open(Path('images/gestures', 'pronation.png')),
             'W': PILImage.open(Path('images/gestures', 'supination.png'))
-        }
+        }):
+        # self.config = config
+        # self.pred_queue = pred_queue
+        self.history = deque(maxlen=1000)
+        self.tale = []
+        self.axis_images = axis_images
                
     def _initialize_plot(self, config):
         self.fig = plt.figure(figsize=(8, 8))
@@ -587,7 +588,10 @@ class PredictionPlotter:
         self.ax_east = self.fig.add_subplot(gs[1, 2])   # East (right center)
         self.ax_south = self.fig.add_subplot(gs[2, 1])  # South (bottom center)
 
-        self.ax_main.set_title("Main Plot (Updates Here)")
+        self.ax_main.set_title("Estimated Motor Function")
+        self.ax_main.set_xlabel("MF 1")
+        self.ax_main.set_ylabel("MF 2")
+        self.ax_main.grid(True)
         #self.ax_main.plot(np.sin(np.linspace(0, 10, 100)))  # Example data
         # Plot of predictions
         self.tale_plot, = self.ax_main.plot([], [], 'o', color='gray', markersize=4, alpha=0.5, label='Tale')
@@ -605,16 +609,16 @@ class PredictionPlotter:
         ]
 
         # Figures for images of motor functions
-        self.ax_north.set_title("North")
+        #self.ax_north.set_title()
         self.ax_north.imshow(self.axis_images['N'])
 
-        self.ax_south.set_title("South")
+        #self.ax_south.set_title("South")
         self.ax_south.imshow(self.axis_images['S'])
 
-        self.ax_west.set_title("West")
+        #self.ax_west.set_title("West")
         self.ax_west.imshow(self.axis_images['W'])
 
-        self.ax_east.set_title("East")
+        #self.ax_east.set_title("East")
         self.ax_east.imshow(self.axis_images['E'])
 
         # Hide axis labels for surrounding figures
@@ -622,51 +626,6 @@ class PredictionPlotter:
             ax.set_xticks([])
             ax.set_yticks([])
 
-        
-    # def _initialize_plot(self, config):
-    #     plt.style.use('ggplot')
-    #     self.fig, self.ax = plt.subplots(figsize=(6,6))
-    #     plt.subplots_adjust(bottom=0.35)
-    #     self.fig.suptitle('Live Regressor Output', fontsize=16)
-    #     self.ax.set_xlabel('Prediction DOF 1')
-    #     self.ax.set_ylabel('Prediction DOF 2')
-    #     self.ax.grid(True)
-    #     self.ax.axhline(0, color='black', linewidth=1)
-    #     self.ax.axvline(0, color='black', linewidth=1)
-        
-    #     self.circle = plt.Circle((0, 0), config["__mc_deadband"], color='r', fill=False, linestyle='dashed')
-    #     self.ax.add_patch(self.circle)
-        
-    #     self.tale_plot, = self.ax.plot([], [], 'o', color='gray', markersize=4, alpha=0.5, label='Tale')
-    #     self.current_plot, = self.ax.plot([], [], 'o', color='red', markersize=8, markeredgecolor='black', label='Current Prediction')
-        
-    #     self.threshold_lines = [
-    #         self.ax.plot([], [], 'b')[0],
-    #         self.ax.plot([], [], 'b')[0],
-    #         self.ax.plot([], [], 'b')[0],
-    #         self.ax.plot([], [], 'b')[0]
-    #     ]
-    
-    def _add_images(self):
-        # img_paths = [
-        #     "./figures/gestures/hand_close.png",
-        #     "./figures/gestures/hand_open.png",
-        #     "./figures/gestures/pronation.png",
-        #     "./figures/gestures/supination.png"
-        # ]
-        # positions = [
-        #     (0.5, 1.2),
-        #     (0.5, -0.3),
-        #     (-0.3, 0.5),
-        #     (1.3, 0.5)
-        # ]
-        # for img_path, (x, y) in zip(img_paths, positions):
-        #     img = mpimg.imread(img_path)
-        #     imagebox = OffsetImage(img, zoom=0.3)
-        #     ab = AnnotationBbox(imagebox, (x, y), frameon=False, xycoords='axes fraction')
-        #     self.ax.add_artist(ab)
-
-        self._format_figure()
 
     def _calculate_range(self):
         if len(self.history) > 0:

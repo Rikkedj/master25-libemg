@@ -11,8 +11,9 @@ class ML_GUI:
     def __init__(self, 
                  online_data_handler, 
                  args,
+                 axis_images=None,
                  model_str=None,
-                 width=1920,
+                 width=1700,
                  height=1080,
                  debug=False,
                  plot_width = 500,
@@ -24,6 +25,7 @@ class ML_GUI:
         self.height = height
         self.debug = debug # Usikker på hva denne er til, kan være den ikke trengs
         self.online_data_handler = online_data_handler
+        self.axis_images = axis_images
         self.model_str = model_str
         self.args = args
         self.window = None

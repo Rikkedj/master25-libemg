@@ -571,6 +571,7 @@ class OfflineDataHandler(DataHandler):
         num_samples = self.data[0].shape[0] # data[0] is the emg data
         num_channels = self.data[0].shape[1]
         rep_data = self.data[0]
+        if time is None: time = num_samples / 2002 # default sampling rate of 2002 Hz
         sampling_rate = self._get_sampling_rate(self.data[0], time)
         #samples = np.arange(num_samples) 
         time_axis = np.arange(num_samples) / sampling_rate
