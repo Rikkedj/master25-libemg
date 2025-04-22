@@ -5,6 +5,7 @@ import libemg
 
 from pathlib import Path
 from PIL import Image as PILImage
+import cv2
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, Slider
@@ -25,6 +26,7 @@ from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import matplotlib.gridspec as gridspec
 import matplotlib.image as mpimg
 import re
+import warnings
 
 # Class made by me
 class ModelConfigPanel:
@@ -69,6 +71,7 @@ class ModelConfigPanel:
         self.gui = gui
         self.data_folder = data_folder
         
+        # Manager for multiprocessing - so that we can handle interactive inputs from GUI
         manager = Manager()
         self.configuration = manager.dict({
             "__mc_deadband": self.deadband,
@@ -84,7 +87,8 @@ class ModelConfigPanel:
         self.prediction_queue = Queue()
         self.plot_process = None
         
-        self.UPD_IP = "127.0.0.1"
+        # Communication with the controller
+        self.UDP_IP = "127.0.0.1"
         self.UDP_PORT = 5005
 
         self.widget_tags = {"configuration": ['__mc_configuration_window', '__mc_deadband', '__mc_alpha_mf1', '__mc_alpha_mf2', '__mc_gain_mf1', '__mc_gain_mf2', '__mc_window_size', '__mc_window_increment']}
@@ -240,7 +244,7 @@ class ModelConfigPanel:
             self.stop_prediction_plot()
 
         self.configuration["running"] = True
-        plotter = PredictionPlotter(self.gui.axis_images)
+        plotter = PredictionPlotter(self.gui.axis_media) #self.gui.axis_images
         self.plot_process = Process(target=plotter.run, args=(self.configuration,self.prediction_queue)) #self.plot_process = Process(target=self.plotter, args=(self.configuration, self.prediction_queue))
         self.plot_process.start()
 
@@ -284,9 +288,9 @@ class ModelConfigPanel:
 
     def _run_controller_helper(self):
         if self.gui.regression_selected:
-            self.controller = RegressorController(ip=self.UPD_IP, port=self.UDP_PORT)
+            self.controller = RegressorController(ip=self.UDP_IP, port=self.UDP_PORT)
         else:
-            self.controller = ClassifierController(output_format='predictions', ip=self.UPD_IP, port=self.UDP_PORT)
+            self.controller = ClassifierController(output_format='predictions', ip=self.UDP_IP, port=self.UDP_PORT)
         
         while self.configuration["running"]:
             pred = self.controller.get_data(["predictions"])
@@ -297,148 +301,6 @@ class ModelConfigPanel:
 
         self.controller = None
                 
-   
-    # @staticmethod
-    # def plotter(config, pred_queue):
-    #     # Initiliaze plot
-    #     plt.style.use('ggplot')
-    #     fig, ax = plt.subplots(figsize=(6,6)) # layout='constrained'
-    #     #gs = gridspec.GridSpec(3, 3, width_ratios=[1, 3, 1], height_ratios=[1, 3, 1])   
-    #     plt.subplots_adjust(bottom=0.35)  # Leave space for two sliders
-
-    #     fig.suptitle('Live Regressor Output', fontsize=16)
-    #     ax.set_xlabel('Prediction DOF 1') # Find a way to get the actual motor function
-    #     ax.set_ylabel('Prediction DOF 2')
-    #     #ax.set_xlim(-1.5, 1.5) # Added by me. To make the plot stay still. 
-    #     #ax.set_ylim(-1.5, 1.5)
-    #     ax.grid(True)
-    #     # Plot coordinate axes
-    #     ax.axhline(0, color='black', linewidth=1)
-    #     ax.axvline(0, color='black', linewidth=1)
-
-    #     # Create an deadband circle
-    #     circle = plt.Circle((0, 0), config["__mc_deadband"], color='r', fill=False, linestyle='dashed')
-    #     ax.add_patch(circle)
-
-    #     tale_plot, = ax.plot([], [], 'o', color='gray', markersize=4, alpha=0.5, label='Tale') # My code
-    #     current_plot, = ax.plot([], [], 'o', color='red', markersize=8, markeredgecolor='black', label='Current Prediction') # My code
-    #     threshold_lines = [
-    #         ax.plot([], [], 'b')[0],  # Line 1 (mirrored around x-axis)
-    #         ax.plot([], [], 'b')[0],  # Line 2 (mirrored around x-axis)
-    #         ax.plot([], [], 'b')[0],  # Line 3 (mirrored around y-axis)
-    #         ax.plot([], [], 'b')[0]   # Line 4 (mirrored around y-axis)
-    #     ]
-    #     history = deque(maxlen=1000) # Queue to store history of predictions for the deadband
-        
-    #     def _calculate_range():
-    #             # Convert deque to NumPy array for easy min/max calculations
-    #             history_array = np.array(history)  # Shape (N, 2)
-
-    #             x_min, x_max = np.min(history_array[:, 0]), np.max(history_array[:, 0])
-    #             y_min, y_max = np.min(history_array[:, 1]), np.max(history_array[:, 1])
-
-    #             x_range = x_max - x_min if x_max > x_min else 1
-    #             y_range = y_max - y_min if y_max > y_min else 1
-
-    #             max_range = max(x_range, y_range)
-    #             return max_range
-        
-    #     def add_figures/():
-    #         """ Hard coded for now. Find path automatically later, as well as a way to handle all figures/ """
-    #         img_paths = [
-    #             "./figures/gestures/hand_close.png",  # Top
-    #             "./figures/gestures/hand_open.png",   # Bottom
-    #             "./figures/gestures/pronation.png",   # Left
-    #             "./figures/gestures/supination.png"   # Right
-    #         ]
-    #         positions = [
-    #             (0.5, 1.2),   # Top
-    #             (0.5, -0.3),  # Bottom
-    #             (-0.3, 0.5),  # Left
-    #             (1.3, 0.5)    # Right
-    #         ]
-    #         for img_path, (x, y) in zip(img_paths, positions):
-    #             img = mpimg.imread(img_path)
-    #             imagebox = OffsetImage(img, zoom=0.3)
-    #             ab = AnnotationBbox(imagebox, (x, y), frameon=False, xycoords='axes fraction')
-    #             ax.add_artist(ab)
-
-    #         # for ax in ax_figures/:
-    #         #     ax.set_xticks([])
-    #         #     ax.set_yticks([])
-    #         #     ax.set_frame_on(False)
-            
-    #         # for ax, img_path in zip(ax_figures/, ['./figures/gestures/hand_close.png', './figures/gestures/hand_open.png', './figures/gestures/pronation.png', './figures/gestures/supination.png']):
-    #         #     img = plt.imread(img_path)
-    #         #     #ax.imshow(img)
-    #         #     imagebox = OffsetImage(img, zoom=0.1)
-    #         #     ab = AnnotationBbox(imagebox, (0, 0), frameon=False)
-    #         #     ax.add_artist(ab)
-    #         #     ax.axis('off')
-
-        
-            
-    #     def _draw_threshold():
-    #         thresh_rad = np.deg2rad(config["__mc_alpha_mf1"])  # Convert threshold angle to radians
-    #         #Define endpoints for each set of lines (assuming symmetry around axes)
-    #         x_vals = np.array([-1.5,1.5])
-    #         y_vals1 = np.tan(thresh_rad) * x_vals  # Lines around x-axis
-    #         y_vals2 = -y_vals1
-    #         #ax.plot(x_vals, y_vals, 'r', label=f'±{thresh_rad}° to x-axis')
-
-    #         thresh_rad = np.deg2rad((config["__mc_alpha_mf2"]))  # Convert threshold angle to radians
-    #         y_vals = np.array([-1.5,1.5])
-    #         x_vals1 = np.tan(thresh_rad) * y_vals  # Lines around y-axis
-    #         x_vals2 = -x_vals1
-
-    #         threshold_lines[0].set_data(x_vals, y_vals1)
-    #         threshold_lines[1].set_data(x_vals, y_vals2)
-    #         threshold_lines[2].set_data(x_vals1, y_vals)
-    #         threshold_lines[3].set_data(x_vals2, y_vals)
-        
-    #     def _draw_deadband():
-    #         if len(history) > 0:
-    #             max_range = _calculate_range()    
-    #             circle.set_radius(config["__mc_deadband"]*max_range)
-
-    #     def _draw_prediction(tale):
-    #         if not pred_queue.empty():
-    #             pred = pred_queue.get() 
-    #             print("In plotter: ", pred)
-    #             pred[0] = pred[0] * config["__mc_gain_mf1"]
-    #             pred[1] = pred[1] * config["__mc_gain_mf2"]
-    #             history.append(pred)
-    #             tale.append(pred)
-    #             tale = tale[-5:] 
-    #             tale_array = np.array(tale)
-    #             if tale_array.shape[0] > 1:
-    #                 tale_plot.set_xdata(tale_array[:, 0])
-    #                 tale_plot.set_ydata(tale_array[:, 1])
-                
-    #             current_plot.set_xdata(np.array(tale)[-1:,0])
-    #             current_plot.set_ydata(np.array(tale)[-1:,1])
-
-    #         return tale_plot, current_plot
-            
-    #     def update(frame, tale):
-    #         if not config["running"]: # Stop when running flag is False
-    #             print("Stopping animation...")
-    #             anim.event_source.stop() # Stop FuncAnimation
-    #             plt.close(fig) # Close figure
-    #             return
-            
-    #         _draw_threshold()
-    #         _draw_deadband()
-    #         tale_plot, current_plot = _draw_prediction(tale)
-    #         fig.canvas.draw_idle()
-    #         ax.relim()
-    #         ax.autoscale_view()
-    #         return tale_plot, current_plot
-        
-    #     add_figures/()        
-    #     anim = FuncAnimation(fig, partial(update, tale=[], ), interval=50, blit=False, cache_frame_data=False, repeat=False)  # must return value or animation won't work
-    #     plt.show()
-
 
     
     def set_up_model(self):
@@ -491,6 +353,10 @@ class ModelConfigPanel:
             labels_key = 'labels'
             metadata_operations = {'labels': 'last_sample'}
         else:
+            regex_filters = [
+                RegexFilter(left_bound = "classification/C_", right_bound="_R", values = [str(i) for i in range(num_motions)], description='classes'),
+                RegexFilter(left_bound = "R_", right_bound="_emg.csv", values = [str(i) for i in range(num_reps)], description='reps')
+            ]
             metadata_fetchers = None
             labels_key = 'classes'
             metadata_operations = None
@@ -539,13 +405,13 @@ class ModelConfigPanel:
             emg_model.fit(feature_dictionary=data_set)
             # consider adding a threshold angle here, or just do this when setting up the controller
             emg_model.add_deadband(self.deadband) # Add a deadband to the regression model. Value below this threshold will be considered 0.
-            self.model = OnlineEMGRegressor(emg_model, self.window_size, self.window_increment, self.gui.online_data_handler, feature_list, ip=self.UPD_IP, port=self.UDP_PORT)
+            self.model = OnlineEMGRegressor(emg_model, self.window_size, self.window_increment, self.gui.online_data_handler, feature_list, ip=self.UDP_IP, port=self.UDP_PORT)
         else:
             # Classification
             emg_model = EMGClassifier(model=model)
             emg_model.fit(feature_dictionary=data_set)
             emg_model.add_velocity(train_windows, train_metadata[labels_key])
-            self.model = OnlineEMGClassifier(emg_model, self.window_size, self.window_increment, self.gui.online_data_handler, feature_list, output_format='probabilities', ip=self.UPD_IP, port=self.UDP_PORT)
+            self.model = OnlineEMGClassifier(emg_model, self.window_size, self.window_increment, self.gui.online_data_handler, feature_list, output_format='probabilities', ip=self.UDP_IP, port=self.UDP_PORT)
 
         # Step 5: Create online EMG model and start predicting.
         print('Model fitted and running!')
@@ -561,37 +427,121 @@ class ModelConfigPanel:
         self.gui.online_data_handler.visualize(block=False)
 
 
-
-
+# Change this to be defined somewhere else, but for testing its here
+SUPPORTED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff']
+SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv']
 class PredictionPlotter:
+    '''
+    The Prediction Plotter class.
+    Parameters
+    ----------
+    axis_media: dict, default=None
+        The axis media for the plot. Should be a dictionary with keys 'N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW' (or less) and values as the images or videos to be displayed.
+        If None, the default images will be used.
+    '''
     def __init__(self, 
-                 axis_images={ 
-            'N': PILImage.open(Path('images/gestures', 'hand_open.png')),
-            'S': PILImage.open(Path('images/gestures', 'hand_close.png')),
-            'E': PILImage.open(Path('images/gestures', 'pronation.png')),
-            'W': PILImage.open(Path('images/gestures', 'supination.png'))
-        }):
+                 axis_media_paths={ 
+                    'N': Path('images/gestures', 'hand_open.png'),
+                    'S': Path('images/gestures', 'hand_close.png'),
+                    'E': Path('images/gestures', 'pronation.png'),
+                    'W': Path('images/gestures', 'supination.png')
+                }):
         # self.config = config
         # self.pred_queue = pred_queue
+        self.axis_media_paths = axis_media_paths
+        self.loaded_media = {}  # Stores {'location': ('type', media_object)}
+        self.media_artists = {} # Stores {'location': AxesImage artist}
+        self.video_caps = {}    # Stores {'location': cv2.VideoCapture} for cleanup
+
         self.history = deque(maxlen=1000)
-        self.tale = []
-        self.axis_images = axis_images
-               
+        self.tale = [] # Keeps track of the last few points for the 'tale' effect. Could be replaced with an arrow.
+        #self.axis_media = axis_media
+        self._load_all_media() # Load media during initialization
+
+    def _load_media(self, location, file_path):
+        """Loads media (image or video) from a file path."""
+        #file_path = Path(file_path)
+        if not file_path.exists():
+            warnings.warn(f"Media file not found at {file_path}. Skipping {location}.")
+            return None, None # Return None if file doesn't exist
+
+        ext = file_path.suffix.lower()
+
+        try:
+            if ext in SUPPORTED_IMAGE_EXTENSIONS:
+                img = PILImage.open(file_path)
+                # Ensure image is in RGB or RGBA for matplotlib
+                if img.mode not in ['RGB', 'RGBA']:
+                     img = img.convert('RGB')
+                return 'image', img
+            
+            elif ext in SUPPORTED_VIDEO_EXTENSIONS:
+                cap = cv2.VideoCapture(str(file_path))
+                if not cap.isOpened():
+                    warnings.warn(f"Could not open video file: {file_path}. Skipping {location}.")
+                    return None, None
+                ret, frame = cap.read()
+                if not ret:
+                    warnings.warn(f"Could not read first frame from video: {file_path}. Skipping {location}.")
+                    cap.release()
+                    return None, None
+                # Convert BGR (OpenCV default) to RGB (Matplotlib default)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.video_caps[location] = cap # Store for later access and release
+                return 'video', frame_rgb # Return the first frame for initial display
+            else:
+                warnings.warn(f"Unsupported file extension '{ext}' for {file_path}. Skipping {location}.")
+                return None, None
+        except Exception as e:
+            warnings.warn(f"Error loading media {file_path} for {location}: {e}")
+            # Ensure capture is released if error occurred during video loading
+            if 'cap' in locals() and isinstance(cap, cv2.VideoCapture) and cap.isOpened():
+                cap.release()
+            return None, None
+
+    def _load_all_media(self):
+        """Loads all media specified in axis_media_paths."""
+        print("Loading axis media...")
+        for location, path in self.axis_media_paths.items():
+            media_type, media_data = self._load_media(location, path)
+            if media_type:
+                self.loaded_media[location] = (media_type, media_data)
+                print(f"  Loaded {media_type} for {location}: {os.path.basename(path)}")
+            else:
+                 print(f"  Failed to load media for {location}: {os.path.basename(path)}")
+        print("Finished loading axis media.")
+                    
     def _initialize_plot(self, config):
         self.fig = plt.figure(figsize=(8, 8))
+        # Define grid locations mapped to more descriptive names
+        gs_map = {
+            'NW': (0, 0), 'N': (0, 1), 'NE': (0, 2),
+            'W':  (1, 0), 'C': (1, 1), 'E':  (1, 2), # C for Center/Main
+            'SW': (2, 0), 'S': (2, 1), 'SE': (2, 2)
+        }
         gs = gridspec.GridSpec(3, 3, figure=self.fig, width_ratios=[1, 2, 1], height_ratios=[1, 2, 1])
 
-        # Create subplots in the grid
-        self.ax_main = self.fig.add_subplot(gs[1, 1])   # Main (center)
-        self.ax_north = self.fig.add_subplot(gs[0, 1])  # North (top center)
-        self.ax_west = self.fig.add_subplot(gs[1, 0])   # West (left center)
-        self.ax_east = self.fig.add_subplot(gs[1, 2])   # East (right center)
-        self.ax_south = self.fig.add_subplot(gs[2, 1])  # South (bottom center)
+        # Create axes dictionary
+        self.axes = {}
+        for loc, (r, c) in gs_map.items():
+            self.axes[loc] = self.fig.add_subplot(gs[r, c])
 
+        # --- Configure Main Plot (Center) ---
+        self.ax_main = self.axes['C']
         self.ax_main.set_title("Estimated Motor Function")
         self.ax_main.set_xlabel("MF 1")
         self.ax_main.set_ylabel("MF 2")
         self.ax_main.grid(True)
+        self.ax_main.axis('equal') # Ensure aspect ratio is equal
+        # # Create subplots in the grid
+        # self.ax_main = self.fig.add_subplot(gs[1, 1])   # Main (center)
+        # self.ax_north = self.fig.add_subplot(gs[0, 1])  # North (top center)
+        # self.ax_west = self.fig.add_subplot(gs[1, 0])   # West (left center)
+        # self.ax_east = self.fig.add_subplot(gs[1, 2])   # East (right center)
+        # self.ax_south = self.fig.add_subplot(gs[2, 1])  # South (bottom center)
+        # self.ax_ne = self.fig.add_subplot(gs[0, 2])     # North East (top right)
+        # self.ax_nw = self.fig.add_subplot(gs[0, 0])     # North West (top left)
+
         #self.ax_main.plot(np.sin(np.linspace(0, 10, 100)))  # Example data
         # Plot of predictions
         self.tale_plot, = self.ax_main.plot([], [], 'o', color='gray', markersize=4, alpha=0.5, label='Tale')
@@ -608,32 +558,60 @@ class PredictionPlotter:
             self.ax_main.plot([], [], 'b')[0]
         ]
 
-        # Figures for images of motor functions
-        #self.ax_north.set_title()
-        self.ax_north.imshow(self.axis_images['N'])
+        # --- Configure Surrounding Media Axes ---
+        for location, ax in self.axes.items():
+            if location == 'C': # Skip center plot
+                continue
 
-        #self.ax_south.set_title("South")
-        self.ax_south.imshow(self.axis_images['S'])
-
-        #self.ax_west.set_title("West")
-        self.ax_west.imshow(self.axis_images['W'])
-
-        #self.ax_east.set_title("East")
-        self.ax_east.imshow(self.axis_images['E'])
-
-        # Hide axis labels for surrounding figures
-        for ax in [self.ax_north, self.ax_south, self.ax_west, self.ax_east]:
+            # Hide axis labels for surrounding figures
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.axis('off') # Turn off axis decorations
+
+            if location in self.loaded_media:
+                media_type, media_data = self.loaded_media[location]
+                # Display the image or the first frame of the video
+                img_artist = ax.imshow(media_data)
+                self.media_artists[location] = img_artist # Store artist for updates
+            # else:
+                # Optionally display a placeholder if media failed to load
+                # ax.text(0.5, 0.5, f'{location}\n(No Media)', ha='center', va='center', fontsize=9, color='grey')
+
+        # # Figures for images of motor functions
+        # #self.ax_north.set_title()
+        # self.ax_north.imshow(self.axis_images['N'])
+
+        # #self.ax_south.set_title("South")
+        # self.ax_south.imshow(self.axis_images['S'])
+
+        # #self.ax_west.set_title("West")
+        # self.ax_west.imshow(self.axis_images['W'])
+
+        # #self.ax_east.set_title("East")
+        # self.ax_east.imshow(self.axis_images['E'])
+
+        # # Hide axis labels for surrounding figures
+        # for ax in [self.ax_north, self.ax_south, self.ax_west, self.ax_east]:
+        #     ax.set_xticks([])
+        #     ax.set_yticks([])
 
 
     def _calculate_range(self):
-        if len(self.history) > 0:
+        if len(self.history) > 1:
             history_array = np.array(self.history)
             x_min, x_max = np.min(history_array[:, 0]), np.max(history_array[:, 0])
             y_min, y_max = np.min(history_array[:, 1]), np.max(history_array[:, 1])
             return max(x_max - x_min, y_max - y_min, 1)
         return 1
+    
+    def _update_plot_limits(self):
+        """Updates the main plot limits based on data range."""
+        plot_range = self._calculate_range()
+        # Center the plot around the origin or the data mean if preferred
+        center_x, center_y = 0, 0
+
+        self.ax_main.set_xlim(center_x - plot_range, center_x + plot_range)
+        self.ax_main.set_ylim(center_y - plot_range, center_y + plot_range)
     
     def _draw_threshold(self, config):
         thresh_rad_x = np.deg2rad(config["__mc_alpha_mf1"])
@@ -650,6 +628,7 @@ class PredictionPlotter:
         self.threshold_lines[3].set_data(x_vals2, y_vals)
     
     def _draw_deadband(self, config):
+        ''' Updates the deadband circle, given as percent of the range of the data. '''
         self.circle.set_radius(config["__mc_deadband"] * self._calculate_range())
     
     def _draw_prediction(self, config, pred_queue):
@@ -657,8 +636,8 @@ class PredictionPlotter:
             pred = pred_queue.get()
             pred[0] *= config["__mc_gain_mf1"]
             pred[1] *= config["__mc_gain_mf2"]
-            self.history.append(pred)
-            self.tale.append(pred)
+            self.history.append(pred.copy())
+            self.tale.append(pred.copy())
             self.tale = self.tale[-5:]
             tale_array = np.array(self.tale)
             
@@ -669,19 +648,54 @@ class PredictionPlotter:
             self.current_plot.set_xdata(tale_array[-1:, 0])
             self.current_plot.set_ydata(tale_array[-1:, 1])
     
+    def _update_media_frames(self):
+        """Updates frames for any video media."""
+        for location, cap in self.video_caps.items():
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    artist = self.media_artists.get(location)
+                    if artist:
+                        artist.set_data(frame_rgb)
+                else:
+                    # End of video: loop back to the beginning
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read() # Read the first frame again
+                    if ret:
+                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                         artist = self.media_artists.get(location)
+                         if artist:
+                            artist.set_data(frame_rgb)
+
     def update(self, frame, config, pred_queue):
         if not config["running"]:
             print("Stopping animation...")
-            self.anim.event_source.stop()
-            plt.close(self.fig)
-            return
-        
+            if hasattr(self, 'anim') and self.anim.event_source:
+                 self.anim.event_source.stop()
+            self.close() # Release resources
+            # plt.close(self.fig) # Closing handled in self.close()
+            return [] # Return empty list of artists
+
         self._draw_threshold(config=config)
         self._draw_deadband(config=config)
         self._draw_prediction(config=config, pred_queue=pred_queue)
+        self._update_plot_limits()
+        self._update_media_frames()
+
+        # Efficiently redraw necessary parts
         self.fig.canvas.draw_idle()
         self.ax_main.relim()
         self.ax_main.autoscale_view() # self.ax updatet initilize function27.03 11:52
+
+        # Return list of artists that have been updated
+        # If blit=True, this is crucial. If blit=False, less so, but good practice.
+        updated_artists = [self.tale_plot, self.current_plot, self.circle]
+        updated_artists.extend(self.threshold_lines)
+        updated_artists.extend(self.media_artists.values())
+        # Include axes if limits changed, but return artists for blitting
+        # If not using blit=True, returning [] or the list is often fine.
+        return updated_artists
     
     def run(self, config, pred_queue):
         #self._initialize_plot(config)
@@ -690,7 +704,26 @@ class PredictionPlotter:
         self.anim = FuncAnimation(self.fig, partial(self.update, config=config, pred_queue=pred_queue), interval=50, blit=False, cache_frame_data=False, repeat=False)
         plt.tight_layout()
         plt.show()
-    
+        # Cleanup after window is closed (optional, depends if run() is the end)
+        self.close()
+
+    def close(self):
+        """Releases resources, especially video captures."""
+        print("Closing PredictionPlotter and releasing resources...")
+        # Release OpenCV VideoCapture objects
+        for loc, cap in self.video_caps.items():
+            if cap.isOpened():
+                print(f"  Releasing video capture for {loc}...")
+                cap.release()
+        self.video_caps.clear() # Clear the dictionary
+
+        # Close the matplotlib figure if it exists and is managed by this instance
+        if hasattr(self, 'fig') and plt.fignum_exists(self.fig.number):
+             print("  Closing Matplotlib figure...")
+             plt.close(self.fig)
+
+        print("Resources released.")
+
     ########## Got from LibEMG (CartesianPlotAnimator in animator.py)  #################  
     def _format_figure(self):
         max_range = self._calculate_range()

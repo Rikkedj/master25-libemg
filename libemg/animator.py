@@ -369,8 +369,8 @@ class PlotAnimator(Animator):
             except IndexError as e:
                 raise IndexError('Could not find steady state frames. If these features are desired, please pass in steady state frames (i.e., consecutive frames with the same value).') from e
                 
-        # Adjust coordinates if desired
-        coordinates = self._preprocess_coordinates(coordinates)
+        # Adjust coordinates if desired NOTE! This removed the las column when adding angle, so it gets wrong when using it with ArrowPlotAnimator
+        #coordinates = self._preprocess_coordinates(coordinates)
         
         frames = []
         current_steady_state_idx = 0
@@ -393,6 +393,7 @@ class PlotAnimator(Animator):
                 
                 if self.show_direction:
                     # Show path until a change in direction
+                    # Can instead add an arrow here?
                     next_steady_state_idx = current_steady_state_idx + 1 if frame_idx > steady_state_start_indices[current_steady_state_idx] else current_steady_state_idx
                     next_steady_state_start = steady_state_start_indices[next_steady_state_idx]
                     target_alpha += 0.01    # add in fade
@@ -702,3 +703,181 @@ class SingleDirectionBarPlotAnimator(BarPlotAnimator):
         fig, ax = super()._format_figure()
         ax.set(ylim=(0, 1.25)) # set limits only positive instead of both directions
         return fig, ax
+
+
+# 22.04 Made by me
+class MediaGridAnimator(PlotAnimator):
+    SUPPORTED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif'] 
+    SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov']
+
+    def __init__(self,
+                 output_filepath: str = 'libemg_grid.gif',
+                 fps: int = 24,
+                 show_direction: bool = False,
+                 show_countdown: bool = False,
+                 show_boundary: bool = True, 
+                 normalize_distance: bool = False,
+                 plot_line: bool = True, # Often useful here
+                 axis_media_paths: dict[str, str | Path] = {}, # Paths to images/videos
+                 figsize: tuple[int, int] = (8, 8), # Larger figure size often needed
+                 dpi: int = 100, # Higher DPI can be nice
+                 tpd: int = 2):
+
+        # Initialze ScatterAnimator as main plot. Make subplots around this
+        super().__init__(output_filepath, fps, show_direction, show_countdown, show_boundary, figsize, dpi, tpd)
+
+        self.axis_media_paths = {loc: Path(p) for loc, p in axis_media_paths.items()} # Ensure paths are Path objects
+        self.axes = {}           # Dictionary to store axes for each location
+        self.video_elements = {} # Stores VideoElement objects for each video location
+        self.image_artists = {} # Stores image artists for each location
+
+        # self.subplot_axes: Dict[str, plt.Axes] = {} # Stores the axes objects
+        # self.ax_main: Optional[plt.Axes] = None # Explicitly store the main axis
+        # self.loaded_images: Dict[str, np.ndarray] = {} # Store loaded image data (as numpy arrays)
+        # self.image_artists: Dict[str, plt.AxesImage] = {} # Store the artists for images/video frames
+        # self.video_caps: Dict[str, cv2.VideoCapture] = {} # Store OpenCV video captures
+        # self.video_frame_counters: Dict[str, int] = {} # Store current frame index for each video
+        # self.video_total_frames: Dict[str, int] = {} # Store total frames for looping
+
+    def _load_and_store_media(self, loc: str, path: Path):
+        """
+        Loads media (image or video) from a file path. If video, store info for playback speed.
+        Parameters
+        ----------
+        loc: str
+            Location of the media in the grid (e.g., 'NW', 'N', 'NE', etc.).
+        path: Path
+            Path to the media file.
+        """
+        #file_path = Path(file_path)
+        if not path.exists():
+            warnings.warn(f"Media file not found at {path}. Skipping {loc}.")
+            return None, None # Return None if file doesn't exist
+
+        ext = path.suffix.lower()
+
+        try:
+            if ext in self.SUPPORTED_IMAGE_EXTENSIONS:
+                img = Image.open(path)
+                # Ensure image is in RGB or RGBA for matplotlib
+                if img.mode not in ['RGB', 'RGBA']: img = img.convert('RGB')
+                img = np.array(img)  # Convert to numpy array for matplotlib
+                img_artist = self.axes[loc].imshow(img) # Display the image in the corresponding axis
+                self.image_artists[loc] = img_artist # Store the image artist
+                #self.video_dims[location] = img.size # Store image dimensions. NOTE! Could be done later
+                #return 'image', img
+            
+            elif ext in self.SUPPORTED_VIDEO_EXTENSIONS:
+                ve = VideoElement(self.axes[loc], path) # Create a VideoElement for the video
+                if ve.cap: # Only store if successfully opened
+                    self.video_elements[loc] = ve
+                    print(f"  Created VideoElement for {loc}: {os.path.basename(path)}")
+                else:
+                    print(f"  Failed to create VideoElement for {loc}")
+            else:
+                warnings.warn(f"Unsupported file extension '{ext}' for {path}. Skipping {loc}.")
+                
+        except Exception as e:
+            warnings.warn(f"Error loading media {path} for {loc}: {e}")
+            
+
+    def _format_figure(self):
+        ''' Creates '''
+        fig, ax = super()._format_figure()
+        gs_map = {
+            'NW': (0, 0), 'N': (0, 1), 'NE': (0, 2),
+            'W':  (1, 0), 'C': (1, 1), 'E':  (1, 2), # C for Center/Main
+            'SW': (2, 0), 'S': (2, 1), 'SE': (2, 2)
+        }
+        gs = fig.add_gridspec(3, 3, width_ratios=[1, 2, 1], height_ratios=[1, 2, 1])
+
+        for loc, (row, col) in gs_map.items():
+            self.axes[loc] = fig.add_subplot(gs[row, col])
+            
+        # --- Configure surrounding media axes ---    
+        for loc, ax in self.axes.items():
+            if loc == 'C': continue # Skip center plot
+
+            # Hide axis labels for surrounding figures
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.axis('off') # Turn off axis decorations
+
+            path = self.axis_media_paths.get(loc)
+            if path and path.exists(): self._load_and_store_media(loc, path)
+
+
+        # if self.axis_images is not None:
+        #     ax.axis('off')  # hide default axis
+        #     axs = self._add_image_label_axes(fig)
+        #     loc_axis_map = {
+        #         'NW': axs[0, 0],
+        #         'N': axs[0, 1],
+        #         'NE': axs[0, 2],
+        #         'W': axs[1, 0],
+        #         'E': axs[1, 2],
+        #         'SW': axs[2, 0],
+        #         'S': axs[2, 1],
+        #         'SE': axs[2, 2]
+        #     }
+        #     for loc, image in self.axis_images.items():
+        #         ax = loc_axis_map[loc]
+        #         ax.imshow(image)
+        #     # Set main axis so icon is drawn correctly
+        #     plt.sca(axs[1, 1])    
+        #     ax = axs[1, 1]
+        
+        # ticks = [-1., -0.5, 0, 0.5, 1.]
+        # plt.xticks(ticks)
+        # plt.yticks(ticks)
+        # plt.axis('equal')
+        # ax.set(xlim=axis_limits, ylim=axis_limits)
+        return fig, ax
+    
+
+# -------- Helper class for plotting - TODO: move when done -----------
+class VideoElement:
+    def __init__(self, ax, video_path, playback_speed=0.05):
+        self.ax = ax
+        self.video_path = str(video_path)
+        self.playing = True
+        self.cap = cv2.VideoCapture(video_path) if video_path else None
+        self.playback_speed = playback_speed
+        self.frame_counter = 0
+
+        if self.cap and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.image = self.ax.imshow(frame)
+        else:
+            self.image = self.ax.imshow(np.zeros((10,10,3), dtype=np.uint8))  # placeholder
+
+    def update(self):
+        if not self.playing or not self.cap or not self.cap.isOpened():
+            return
+
+        self.frame_counter += 1
+        if self.frame_counter >= self.playback_speed:
+            ret, frame = self.cap.read()
+            if not ret:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+            if ret:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.image.set_data(frame)
+            self.frame_counter = 0
+
+    def pause(self):
+        self.playing = False
+
+    def play(self):
+        self.playing = True
+
+    def reset(self):
+        if self.cap:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    def release(self):
+        if self.cap:
+            self.cap.release()

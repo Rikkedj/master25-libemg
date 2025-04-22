@@ -13,6 +13,5 @@ Thumbs.db
 *.lnk
 *.ini
 
-# Ignore large files (optional)
-data/
+# Ignore large files (optional) data/
 logs/

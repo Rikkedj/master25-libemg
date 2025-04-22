@@ -13,6 +13,7 @@ class ML_GUI:
                  args,
                  axis_images=None,
                  model_str=None,
+                 data_folder = './data/', # added 22.04 -> think this is chosen in TrainingProtocl,
                  width=1700,
                  height=1080,
                  debug=False,
@@ -77,7 +78,7 @@ class ML_GUI:
                 
     def _model_config_callback(self):
         panel_arguments = list(inspect.signature(ModelConfigPanel.__init__).parameters)
-        passed_arguments = {i: self.args[i] for i in self.args.keys() if i in panel_arguments}
+        passed_arguments = {i: self.args[i] for i in self.args.keys() if i in panel_arguments} 
         self.mcp = ModelConfigPanel(**passed_arguments, gui=self)
         self.mcp.spawn_configuration_window()
 
