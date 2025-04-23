@@ -31,52 +31,56 @@ import warnings
 # Class made by me
 class ModelConfigPanel:
     '''
-    The Model Configuration Panel class. 
+    The Model Configuration Panel for configuring the machine learning model. 
     Parameters
     ----------
+    window_size: int, default=150
+        The window size used training the machine learning model (in ms?). 
+    window_increment: int, default=50
+        The window increment for when training the machine learning model (in ms?). 
     deadband: float, default=0.1
         The deadband value for the regression model. If value is less than deadband, the model will output 0. 
-    alpha_mf1: int, default=20
-        The threshold angle for motor function 1. Must be between 0 and 45 degrees.
-    alpha_mf2: int, default=20
+    thr_angle_mf1: int, default=20
+        The threshold angle for motor function 1. Must be between 0 and 45 degrees. 
+        If threshold angles for both motor functions are set to 45, the system will be sequential control. With angles set to 0, both motor functions will always be activated at the same time.
+    thr_angle_mf2: int, default=20
         The threshold angle for motor function 2. Must be between 0 and 45 degrees.
+        If threshold angles for both motor functions are set to 45, the system will be sequential control. With angles set to 0, both motor functions will always be activated at the same time.
     gain_mf1: float, default=0.5
         The gain for motor function 1. Must be between 0.5 and 3.
     gain_mf2: float, default=0.5
         The gain for motor function 2. Must be between 0.5 and 3.
-    window_size: int, default=150
-        The window size for the model (in ms?). 
-    window_increment: int, default=50
-        The window increment for the model (in ms?). 
     gui: GUI
         The GUI object this panel is associated with.
+    training_data_folder: str, default='./data/'
+        The datafolder where the training data is stored. This is used for training the machine learning model.
     '''
     def __init__(self,
+                 window_size=150,                 
+                 window_increment=50,
                  deadband=0.1,
-                 alpha_mf1=20,
-                 alpha_mf2=20,
+                 thr_angle_mf1=20,
+                 thr_angle_mf2=20,
                  gain_mf1=0.5,
                  gain_mf2=0.5,
-                 window_size=150,
-                 window_increment=50,
-                 data_folder='./data/',
+                 training_data_folder='./data/',
                  gui=None):
+        
+        self.window_increment = window_increment
+        self.window_size = window_size
         self.deadband = deadband
-        self.alpha_mf1 = alpha_mf1
-        self.alpha_mf2 = alpha_mf2
+        self.thr_angle_mf1 = thr_angle_mf1
+        self.thr_angle_mf2 = thr_angle_mf2
         self.gain_mf1 = gain_mf1
         self.gain_mf2 = gain_mf2 
-        self.window_size = window_size
-        self.window_increment = window_increment
         self.gui = gui
-        self.data_folder = data_folder
-        
+        self.training_data_folder = training_data_folder
         # Manager for multiprocessing - so that we can handle interactive inputs from GUI
         manager = Manager()
         self.configuration = manager.dict({
             "__mc_deadband": self.deadband,
-            "__mc_alpha_mf1": self.alpha_mf1,
-            "__mc_alpha_mf2": self.alpha_mf2,
+            "__mc_thr_angle_mf1": self.thr_angle_mf1,
+            "__mc_thr_angle_mf2": self.thr_angle_mf2,
             "__mc_gain_mf1": self.gain_mf1,
             "__mc_gain_mf2": self.gain_mf2,
             "__mc_window_size": self.window_size,
@@ -91,7 +95,8 @@ class ModelConfigPanel:
         self.UDP_IP = "127.0.0.1"
         self.UDP_PORT = 5005
 
-        self.widget_tags = {"configuration": ['__mc_configuration_window', '__mc_deadband', '__mc_alpha_mf1', '__mc_alpha_mf2', '__mc_gain_mf1', '__mc_gain_mf2', '__mc_window_size', '__mc_window_increment']}
+        self.widget_tags = {"configuration": ['__mc_configuration_window', '__mc_deadband', '__mc_thr_angle_mf1', '__mc_thr_angle_mf2', '__mc_gain_mf1', '__mc_gain_mf2', '__mc_window_size', '__mc_window_increment'],
+                            "save_dialog": ['save_config_tag']}                           
                
 
     def cleanup_window(self, window_name): # Don't really know what this does
@@ -133,8 +138,8 @@ class ModelConfigPanel:
                                             callback=self.update_value_callback # Give another callback, that gets settings, updates plot and updates model
                                         )
                     with dpg.group(horizontal=True):
-                        dpg.add_button(label="Reset Model", 
-                                       width = 100,
+                        dpg.add_button(label="Re-fit Model", 
+                                       width = len("Re-fit Model")*10,
                                        callback=self.reset_model_callback
                                     )
                         
@@ -154,8 +159,8 @@ class ModelConfigPanel:
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
                         dpg.add_text(default_value="Threshold angle mf1 (degrees): ")
-                        dpg.add_input_int(default_value=self.alpha_mf1,
-                                            tag="__mc_alpha_mf1",
+                        dpg.add_input_int(default_value=self.thr_angle_mf1,
+                                            tag="__mc_thr_angle_mf1",
                                             width=100,
                                             min_value=0,
                                             max_value=45,
@@ -165,8 +170,8 @@ class ModelConfigPanel:
                                         )
                     with dpg.group(horizontal=True):
                         dpg.add_text(default_value="Threshold angle mf2 (degrees): ")
-                        dpg.add_input_int(default_value=self.alpha_mf2,
-                                            tag="__mc_alpha_mf2",
+                        dpg.add_input_int(default_value=self.thr_angle_mf2,
+                                            tag="__mc_thr_angle_mf2",
                                             width=100,
                                             min_value=0,
                                             max_value=45,
@@ -197,7 +202,24 @@ class ModelConfigPanel:
                                             max_clamped=True,
                                             callback=self.update_value_callback
                                         )
-
+                    with dpg.group(horizontal=True): # Button to store the configuration
+                        dpg.add_button(label="Save Configuration", 
+                                       width = len("Save Configuration")*10,
+                                       callback=self.save_config_callback
+                                    )
+                    # --- Define the file dialog (initially hidden) ---
+                    with dpg.file_dialog(
+                        directory_selector=False,   # We want to select a file
+                        show=False,                 # Start hidden
+                        callback=self._handle_save_dialog_callback, # Callback for OK/Cancel
+                        tag='save_config_tag',     # Tag for the file dialog
+                        width=700, height=400,
+                        default_filename="model_config.json",
+                        default_path=str(Path('./model').absolute()), # Use forward slash
+                        modal=True                  # Block other interaction
+                        ):
+                            dpg.add_file_extension(".json", color=(0, 255, 0, 255)) # Filter for json
+                            dpg.add_file_extension(".*") # Allow all files too
                 # Visualization buttons
                 with dpg.table_row():
                     dpg.add_button(label="Visualize Prediction", callback=self.prediction_btn_callback)
@@ -205,8 +227,57 @@ class ModelConfigPanel:
                     #dpg.add_button(label="Save Configuration", callback=self.save_configuration)
 
     def update_value_callback(self, sender, app_data):
+        '''Updates the configuration dictionary with the new values from the GUI.'''
         self.configuration[sender] = app_data
         print(self.configuration)
+
+    def save_config_callback(self, sender, app_data):
+        """Opens the file save dialog."""
+        # Show the pre-defined file dialog
+        dpg.show_item('save_config_tag')
+        # 1. Save the configuration to a file
+        # open window to select where to save the configuration
+        # Save the configuration to a file
+        # Check if the file already exists, if so, ask if the user wants to overwrite it
+        # If the file does not exist, create it
+        # Save the configuration to a file
+
+    def _handle_save_dialog_callback(self, sender, app_data):
+        """Handles the result of the file save dialog."""
+        if app_data is None or 'file_path_name' not in app_data or not app_data['file_path_name']:
+            print("Save cancelled by user.")
+            return # User cancelled
+        
+        file_path = Path(app_data['file_path_name'])
+
+        # Ensure the extension is .json if not provided
+        if file_path.suffix.lower() != ".json": 
+            file_path = file_path.with_suffix(".json")
+
+        # Check if file exists
+        # if file_path.exists():
+        #     # Store path and ask for confirmation
+        #     self._pending_save_path = file_path
+        #     self._show_overwrite_confirmation_dialog(file_path)
+        # else:
+        #     # File doesn't exist, save directly
+        self._save_configuration_to_file(file_path)
+
+
+
+
+    def _save_configuration_to_file(self, file_path: Path):
+        """Saves the current configuration to a file."""
+        try:
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            # Convert Manager.dict proxy to a standard dict 
+            config_to_save = dict(self.configuration)
+            with open(file_path, 'w') as f:
+                json.dump(config_to_save, f, indent=4) # Save the configuration to a file
+            print(f"Configuration saved to {file_path}")
+        except Exception as e:
+            print(f"Error saving configuration: {e}")
 
 
     def reset_model_callback(self):
@@ -226,8 +297,8 @@ class ModelConfigPanel:
         self.deadband = float(dpg.get_value(item="__mc_deadband"))
         self.gain_mf1 = float(dpg.get_value(item="__mc_gain_mf1"))
         self.gain_mf2 = float(dpg.get_value(item="__mc_gain_mf2"))
-        self.alpha_mf1 = int(dpg.get_value(item="__mc_alpha_mf1"))
-        self.alpha_mf2 = int(dpg.get_value(item="__mc_alpha_mf2"))
+        self.thr_angle_mf1 = int(dpg.get_value(item="__mc_thr_angle_mf1"))
+        self.thr_angle_mf2 = int(dpg.get_value(item="__mc_thr_angle_mf2"))
         self.window_size = int(dpg.get_value(item="__mc_window_size"))
         self.window_increment = int(dpg.get_value(item="__mc_window_increment"))
         print("Settings updated")
@@ -305,7 +376,7 @@ class ModelConfigPanel:
     
     def set_up_model(self):
         # Step 1: Parse offline training data
-        with open(self.data_folder + '/collection_details.json', 'r') as f:
+        with open(self.training_data_folder + '/collection_details.json', 'r') as f:
             collection_details = json.load(f)
         
         def _match_metadata_to_data(metadata_file: str, data_file: str, class_map: dict) -> bool:
@@ -614,11 +685,11 @@ class PredictionPlotter:
         self.ax_main.set_ylim(center_y - plot_range, center_y + plot_range)
     
     def _draw_threshold(self, config):
-        thresh_rad_x = np.deg2rad(config["__mc_alpha_mf1"])
+        thresh_rad_x = np.deg2rad(config["__mc_thr_angle_mf1"])
         x_vals = np.array([-1.5, 1.5])
         y_vals1, y_vals2 = np.tan(thresh_rad_x) * x_vals, -np.tan(thresh_rad_x) * x_vals
         
-        thresh_rad_y = np.deg2rad(config["__mc_alpha_mf2"])
+        thresh_rad_y = np.deg2rad(config["__mc_thr_angle_mf2"])
         y_vals = np.array([-1.5, 1.5])
         x_vals1, x_vals2 = np.tan(thresh_rad_y) * y_vals, -np.tan(thresh_rad_y) * y_vals
         

@@ -783,20 +783,26 @@ class MediaGridAnimator(PlotAnimator):
 
     def _format_figure(self):
         ''' Creates '''
-        fig, ax = super()._format_figure()
+        fig = plt.figure(figsize=(8, 8))
+        #fig, ax = super()._format_figure()
         gs_map = {
             'NW': (0, 0), 'N': (0, 1), 'NE': (0, 2),
             'W':  (1, 0), 'C': (1, 1), 'E':  (1, 2), # C for Center/Main
             'SW': (2, 0), 'S': (2, 1), 'SE': (2, 2)
         }
         gs = fig.add_gridspec(3, 3, width_ratios=[1, 2, 1], height_ratios=[1, 2, 1])
-
+        
+        self.axes = {}
         for loc, (row, col) in gs_map.items():
             self.axes[loc] = fig.add_subplot(gs[row, col])
             
         # --- Configure surrounding media axes ---    
         for loc, ax in self.axes.items():
-            if loc == 'C': continue # Skip center plot
+            if loc == 'C': 
+                ax.set_xlim(-1.25, 1.25) # Set limits for main axis
+                ax.set_ylim(-1.25, 1.25)
+                ax.grid(True)
+                continue            
 
             # Hide axis labels for surrounding figures
             ax.set_xticks([])
@@ -806,34 +812,92 @@ class MediaGridAnimator(PlotAnimator):
             path = self.axis_media_paths.get(loc)
             if path and path.exists(): self._load_and_store_media(loc, path)
 
+        return fig, self.axes['C'] # Return the main axis for plotting
 
-        # if self.axis_images is not None:
-        #     ax.axis('off')  # hide default axis
-        #     axs = self._add_image_label_axes(fig)
-        #     loc_axis_map = {
-        #         'NW': axs[0, 0],
-        #         'N': axs[0, 1],
-        #         'NE': axs[0, 2],
-        #         'W': axs[1, 0],
-        #         'E': axs[1, 2],
-        #         'SW': axs[2, 0],
-        #         'S': axs[2, 1],
-        #         'SE': axs[2, 2]
-        #     }
-        #     for loc, image in self.axis_images.items():
-        #         ax = loc_axis_map[loc]
-        #         ax.imshow(image)
-        #     # Set main axis so icon is drawn correctly
-        #     plt.sca(axs[1, 1])    
-        #     ax = axs[1, 1]
+
+    def plot_center_icon(self, coordinates: npt.NDArray[np.float_], alpha: float = 1.0, colour: str = 'black', save_coordinates: bool = False, title: str = '', xlabel: str = '', ylabel: str = '', verbose: bool = False): 
+        """Plot the icon in the center of the grid."""
+        # Parse coordinates
+        if save_coordinates:
+            # Save coordinates in .txt file
+            labels_filepath = Path(self.output_filepath).with_suffix('.txt')
+            labels_filepath.parent.mkdir(parents=True, exist_ok=True)
+            np.savetxt(labels_filepath, coordinates, delimiter=',')
+
+        # Format figure
+        fig, ax = self._format_figure()
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        fig.suptitle(title)
+        fig.tight_layout()
+
+        split_steady_state_indices = None
+        steady_state_start_indices = None
+        steady_state_end_indices = None
+        if self.show_direction or self.show_countdown:
+            # Calculate steady states
+            diff = np.diff(coordinates, axis=0)
+            max_diff = np.max(np.abs(diff), axis=1)
+            all_steady_state_indices = np.where(max_diff < 0.01)[0] # find where the differences at each frame is less than some threshold
+            try:
+                # Only take starts and ends of each segment
+                split_steady_state_indices = np.split(all_steady_state_indices, np.where(np.diff(all_steady_state_indices) != 1)[0] + 1)    # add 1 to align diff with original
+                split_steady_state_indices.append(np.array([coordinates.shape[0] - 1])) # append last frame
+                steady_state_start_indices = np.array([segment[0] for segment in split_steady_state_indices])
+                steady_state_end_indices = np.array([segment[-1] for segment in split_steady_state_indices])
+            except IndexError as e:
+                raise IndexError('Could not find steady state frames. If these features are desired, please pass in steady state frames (i.e., consecutive frames with the same value).') from e
+                
+
+        frames = []
+        current_steady_state_idx = 0
+        target_alpha = 0.05
+        for frame_idx, frame_coordinates in enumerate(coordinates):
+            if verbose and frame_idx % 10 == 0:
+                print(f'Frame {frame_idx} / {coordinates.shape[0]}')
+            
+            # Plot additional information
+            if self.show_boundary:
+                # Show boundaries
+                self._show_boundary()
+            
+            if (self.show_direction or self.show_countdown) and split_steady_state_indices is not None and steady_state_start_indices is not None and steady_state_end_indices is not None:
+                # Calculate next steady state frame
+                next_steady_state_idx = min(current_steady_state_idx, len(steady_state_end_indices) - 1)    # limit max index
+                if frame_idx > steady_state_end_indices[current_steady_state_idx]:
+                    current_steady_state_idx += 1
+                    target_alpha = 0.05 # reset alpha
+                
+                if self.show_direction:
+                    # Show path until a change in direction
+                    # Can instead add an arrow here?
+                    next_steady_state_idx = current_steady_state_idx + 1 if frame_idx > steady_state_start_indices[current_steady_state_idx] else current_steady_state_idx
+                    next_steady_state_start = steady_state_start_indices[next_steady_state_idx]
+                    target_alpha += 0.01    # add in fade
+                    target_alpha = min(0.4, target_alpha) # limit alpha to 0.4
+                    self._show_direction(coordinates[next_steady_state_start], alpha=target_alpha)
+                    
+                if self.show_countdown:
+                    # Show countdown during steady state
+                    steady_state_end = steady_state_end_indices[current_steady_state_idx]
+                    time_until_movement = (steady_state_end - frame_idx) * self.duration / 1000   # convert from frames to seconds
+                    if time_until_movement >= 0.25 and frame_idx in split_steady_state_indices[current_steady_state_idx]:
+                        # Only show countdown if the steady state is longer than 1 second
+                        self._show_countdown(frame_coordinates, str(int(time_until_movement)))
+                
+            # Plot icon
+            self.plot_icon(frame_coordinates)
+                
+            # Save frame
+            frame = self._convert_plot_to_image(fig)
+            frames.append(frame)
+            # Clear axis while retaining formatting
+            for artist in ax.lines + ax.collections + ax.patches + ax.texts:
+                artist.remove()
         
-        # ticks = [-1., -0.5, 0, 0.5, 1.]
-        # plt.xticks(ticks)
-        # plt.yticks(ticks)
-        # plt.axis('equal')
-        # ax.set(xlim=axis_limits, ylim=axis_limits)
-        return fig, ax
-    
+        # Save file
+        self.save_video(frames)
+
 
 # -------- Helper class for plotting - TODO: move when done -----------
 class VideoElement:

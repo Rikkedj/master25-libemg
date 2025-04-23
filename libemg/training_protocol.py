@@ -38,22 +38,23 @@ class TrainingProtocol:
             'diagonal_2': (1, -1)*1/np.sqrt(2),              # Diagonal movement (↘)
         }
         # TODO: Add images the simultanous gestures
-        # self.axis_media = {
-        #     'N': PILImage.open(Path('images/gestures', 'pronation.png')),
-        #     'S': PILImage.open(Path('images/gestures', 'supination.png')),
-        #     'E': PILImage.open(Path('images/gestures', 'hand_open.png')),
-        #     'W': PILImage.open(Path('images/gestures', 'hand_close.png')),
-        #     #'NE': cv2.VideoCapture(Path('images_master/videos', 'IMG_4930.MOV')),  # store path instead
-        #     #'NW': cv2.VideoCapture(Path('images_master/videos', 'IMG_4931.MOV'))
-        # }
-        self.axis_media_paths = {
-            'N': Path('images/gestures', 'pronation.png'),
-            'S': Path('images/gestures', 'supination.png'),
-            'E': Path('images/gestures', 'hand_open.png'),
-            'W': Path('images/gestures', 'hand_close.png'),
-            'NE': Path('images_master/videos', 'IMG_4930.MOV'), 
-            'NW': Path('images_master/videos', 'IMG_4931.MOV')
+        self.axis_media = {
+            'N': PILImage.open(Path('images/gestures', 'pronation.png')),
+            'S': PILImage.open(Path('images/gestures', 'supination.png')),
+            'E': PILImage.open(Path('images/gestures', 'hand_open.png')),
+            'W': PILImage.open(Path('images/gestures', 'hand_close.png')),
+            #'NE': cv2.VideoCapture(Path('images_master/videos', 'IMG_4930.MOV')),  # store path instead
+            #'NW': cv2.VideoCapture(Path('images_master/videos', 'IMG_4931.MOV'))
         }
+        # # ---- This is for when training with simultnoeus gestures gets implemented right ---
+        # self.axis_media_paths = {
+        #     'N': Path('images/gestures', 'pronation.png'),
+        #     'S': Path('images/gestures', 'supination.png'),
+        #     'E': Path('images/gestures', 'hand_open.png'),
+        #     'W': Path('images/gestures', 'hand_close.png'),
+        #     'NE': Path('images_master/videos', 'IMG_4930.MOV'), 
+        #     'NW': Path('images_master/videos', 'IMG_4931.MOV')
+        # }
         self.window = None
         self.initialize_ui()
         self.window.mainloop()
@@ -140,11 +141,12 @@ class TrainingProtocol:
     def configure_model_callback(self):
         self.window.destroy()
         if self.regression_selected(): # Trenger vel i utgpkt ikke disse, da de ikke brukes i ML_GUI? -> TODO: burde hente de i ML_GUI 
-            args = {'media_folder': 'animation/', 'data_folder': Path('data', 'regression').absolute().as_posix(), 'rep_time': 50}
+            data_folder = Path('data', 'regression').absolute().as_posix()
         else:
-            args = {'media_folder': 'images/', 'data_folder': Path('data', 'classification').absolute().as_posix()}
-       # model_ui = ML_GUI(online_data_handler=self.odh, regression_selected=self.regression_selected(), model_str=self.model_str.get(), axis_images=self.axis_media, args=args)
-       # model_ui.start_gui()
+            data_folder = Path('data', 'classification').absolute().as_posix()
+        args = {'window_size':150, 'window_increment':50, 'deadband': 0.1, 'thr_angle_mf1': 45, 'thr_angle_mf2': 45, 'gain_mf1': 1, 'gain_mf2': 1}
+        model_ui = ML_GUI(online_data_handler=self.odh, regression_selected=self.regression_selected(), model_str=self.model_str.get(), axis_media=self.axis_media, args=args, training_data_folder=data_folder)
+        model_ui.start_gui()
         self.initialize_ui()
     
     # --------- Helper functions for the buttons in the menu -----------
@@ -284,10 +286,10 @@ class TrainingProtocol:
             # Apply movement transformation
             coordinates = np.hstack((x_coords, y_coords, angles))  
             
-            animator = MediaGridAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_media_paths=self.axis_media_paths, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
-            animator.save_plot_video(coordinates, title=f'Regression Training - {mf}', save_coordinates=True, verbose=True)
-            #scatter_animator_x = ScatterPlotAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_images=self.axis_media, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
-            #scatter_animator_x.save_plot_video(coordinates, title=f'Regression Training - {mf}', save_coordinates=True, verbose=True)
+            #animator = MediaGridAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_media_paths=self.axis_media_paths, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
+            #animator.plot_center_icon(coordinates, title=f'Regression Training - {mf}', save_coordinates=True, xlabel='MF 1', ylabel='MF 2')
+            scatter_animator_x = ScatterPlotAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_images=self.axis_media, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
+            scatter_animator_x.save_plot_video(coordinates, title=f'Regression Training - {mf}', save_coordinates=True, verbose=True)
             #arrow_animator = ArrowPlotAnimator(output_filepath=output_filepath.as_posix(), show_direction=True, show_countdown=True, axis_images=self.axis_media, figsize=(10,10), normalize_distance=True, show_boundary=True, tpd=2)#, plot_line=True) # plot_line does not work
             #arrow_animator.save_plot_video(coordinates, title=f'Regression Training - {mf}', save_coordinates=True, verbose=True)
 

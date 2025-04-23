@@ -6,14 +6,40 @@ from libemg._gui._model_config_panel import ModelConfigPanel # Could remove this
 
 class ML_GUI:
     '''
-    The GUI for configuring the prediction model, either the classifier or the regressor. Mostly like the GUI for configuring the training model, but with some differences.
+    The GUI for configuring the prediction model, either the classifier or the regressor.
+
+    Parameters
+    ----------
+    online_data_handler : OnlineDataHandler
+        The online data handler that is used to get the data from the streamer.
+    args : dict
+        The arguments that are used to configure the model. This is a dictionary with the following keys
+
+    axis_media : dict
+        Dictionary mapping compass directions to media (image or video). Media will be displayed in the corresponding compass direction (i.e., 'N' correponds to the top of the image).
+        Valid keys are 'NW', 'N', 'NE', 'W', 'E', 'SW', 'S', 'SE'. If None, no media will be displayed. The media shows the motor functions that are being predicted.
+    model_str : str
+        The classification or regression model used, given as string.
+    width : int
+        The width of the GUI window.
+    height : int
+        The height of the GUI window.
+    debug : bool CHECK THIS PUT. DON'T KNOW IF ITS NECESSEARY
+        If True, the GUI will run in debug mode. This means that the GUI will not be closed when the user clicks the close button. Instead, the GUI will be stopped and the program will continue to run.
+    plot_width : int
+        The width of the plot window.
+    plot_height : int
+        The height of the plot window.
+    regression_selected : bool
+        If True, the regression model is selected. This is used to determine which model to use for prediction.
+
     '''
     def __init__(self, 
                  online_data_handler, 
                  args,
-                 axis_images=None,
+                 axis_media=None,
                  model_str=None,
-                 data_folder = './data/', # added 22.04 -> think this is chosen in TrainingProtocl,
+                 training_data_folder = './data/', # added 22.04 -> think this is chosen in TrainingProtocl,
                  width=1700,
                  height=1080,
                  debug=False,
@@ -26,7 +52,7 @@ class ML_GUI:
         self.height = height
         self.debug = debug # Usikker på hva denne er til, kan være den ikke trengs
         self.online_data_handler = online_data_handler
-        self.axis_images = axis_images
+        self.axis_media = axis_media
         self.model_str = model_str
         self.args = args
         self.window = None
@@ -34,6 +60,7 @@ class ML_GUI:
         self.plot_height = plot_height
         self.regression_selected = regression_selected # Bool that tells if the regression model is selected, gotten from function in TrainingProtocol
         self.clean_up_on_kill = clean_up_on_kill
+        self.training_data_folder = training_data_folder
         #self.initialize_ui()
         #self.window.mainloop()
 
@@ -77,9 +104,9 @@ class ML_GUI:
                 dpg.add_menu_item(label="Configure Model", callback=self._model_config_callback, show=True)
                 
     def _model_config_callback(self):
-        panel_arguments = list(inspect.signature(ModelConfigPanel.__init__).parameters)
+        panel_arguments = list(inspect.signature(ModelConfigPanel.__init__).parameters) # Get the arguments of the ModelConfigPanel class
         passed_arguments = {i: self.args[i] for i in self.args.keys() if i in panel_arguments} 
-        self.mcp = ModelConfigPanel(**passed_arguments, gui=self)
+        self.mcp = ModelConfigPanel(**passed_arguments, gui=self, training_data_folder=self.training_data_folder) # Create the ModelConfigPanel object
         self.mcp.spawn_configuration_window()
 
     def _exit_window_callback(self):
