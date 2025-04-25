@@ -15,22 +15,25 @@ from libemg.environments.controllers import ClassifierController, RegressorContr
 from model_gui import ML_GUI
 from libemg.environments.fitts import ISOFitts, FittsConfig
 import re, json
+from libemg.prosthesis import Prosthesis, ActuatorFunctionSelection
 
-class TrainingProtocol:
-    """Class to handle the training protocol for the EMG classifier/regressor. Inspired by the Menu class in Menu.py.
+class SimultaneousProsthesisControl:
+    """Class to Simultaneous Proportional Prosthesis control system. Inspired by the Menu class in Menu.py.
     Note! Only regression is supported for now.
     """
-    def __init__(self):
-        streamer, sm = delsys_streamer(channel_list=[0,1,2,3,8]) # returns streamer and the shared memory object, need to give in the active channels number -1, so 2 is sensor 3
+    def __init__(self, feature_list=None):
+        streamer, sm = delsys_streamer(channel_list=[0,1,2,9,13]) # returns streamer and the shared memory object, need to give in the active channels number -1, so 2 is sensor 3
         # Create online data handler to listen for the data
         self.odh = OnlineDataHandler(sm)
         # Learning model
-        self.model = None
+        self.model = None # The classifier or regressor
         self.model_str = None
+        
+        self.feature_list = feature_list # Feature list to be used in the training protocol. Default is HTD features.
 
         #self.training_data_folder = Path('data', 'classification').absolute().as_posix() # Folder where training data is stored. Used in set_up_model and ML_GUI, hence here for consistency. Changed in regression_selected() to regression data folder. Nvm, that doesn't work
 
-        # Initialize motor functions here for easier access
+        # Initialize motor functions for the training protocol
         self.motor_functions = {
             'hand_open_close': (1, 0),          # Movement along x-axis
             'pronation_supination': (0, 1),     # Movement along y-axis
@@ -85,7 +88,7 @@ class TrainingProtocol:
         # Visualize predictions
         Button(self.window, font=("Arial", 18), text = 'Configure Model', command=self.configure_model_callback).pack(pady=(0,20))
         # Run prosthesis
-        #Button(self.window, font=("Arial", 18), text = 'Run Prosthesis', command=self.run_prosthesis).pack(pady=(0,20)) # Added 22.04. This may be in Configure Model -> try it out.
+        Button(self.window, font=("Arial", 18), text = 'Run Prosthesis', command=self.run_prosthesis).pack(pady=(0,20)) # Added 22.04. This may be in Configure Model -> try it out.
         # Start Isofitts
         Button(self.window, font=("Arial", 18), text = 'Start Isofitts', command=self.start_test).pack(pady=(0,20))
 
@@ -114,7 +117,7 @@ class TrainingProtocol:
             controller = RegressorController()
             save_file = Path('results', self.model_str.get() + '_reg' + ".pkl").absolute().as_posix()
         else:
-            controller = ClassifierController(output_format=self.model.output_format, num_classes=5)
+            controller = ClassifierController(output_format=self.model.output_format, num_classes=5) # get num_classes from config
             save_file = Path('results', self.model_str.get() + '_clf' + ".pkl").absolute().as_posix()
         
         config = FittsConfig(num_trials=16, save_file=save_file)
@@ -149,24 +152,83 @@ class TrainingProtocol:
         model_ui.start_gui()
         self.initialize_ui()
     
-    # --------- Helper functions for the buttons in the menu -----------
-    # Gotten from LibEMG Menu.py. Cannot choose model parameters in GUI. Could save the model configuration in this window and use it in this function?
-    def set_up_model(self):
-        # These parameters should be set and sotred in ConfigureModelGUI, in a json-file or something and read here. 
-        WINDOW_SIZE = 150   
-        WINDOW_INCREMENT = 50
+    def run_prosthesis(self):
+        self.set_up_model()
+        self.window.destroy()
         if self.regression_selected(): 
-            data_folder = 'data/regression' 
-        else: 
-            data_folder = 'data/classification' # Added 22.04. Hardcoded, could find a way to store this?
+            controller = RegressorController(port=5005)
+        else:
+            controller = ClassifierController(output_format=self.model.output_format, num_classes=5)
+    
+        prosthesis = Prosthesis()
+        prosthesis.connect("COM3", baudrate=115200)
+        actuator_function = ActuatorFunctionSelection(prosthesis=prosthesis, controller=controller)
+        motor_setpoints = actuator_function.get_motor_setpoints()
+        if motor_setpoints is not None:
+            prosthesis.send_command(motor_setpoints)
 
-        # Step 1: Parse offline training data CHANGED 22.04 -> CHECK THAT IT WORKS
+
+    # --------- Helper functions for the buttons in the menu -----------
+    def _create_default_model_config(self, config_file_path):
+        """Creates a default model configuration and saves it to a JSON file."""
+        default_config = {
+            'window_size': 150,
+            'window_increment': 50,
+            'deadband': 0.1,
+            'thr_angle_mf1': 45,
+            'thr_angle_mf2': 45,
+            'gain_mf1': 1,
+            'gain_mf2': 1
+        }
+        with open(config_file_path, 'w') as f:
+            json.dump(default_config, f, indent=4)
+        print(f"Default configuration saved to {config_file_path}.")
+        return default_config
+    
+    # Gotten from LibEMG Menu.py. Used when doing Isofitts test.
+    def set_up_model(self):
+        """Sets up the model by checking for a configuration JSON file or creating a default one."""
+        config_file_path = Path('model_config.json')
+
+        # Check if the configuration file exists
+        if config_file_path.exists():
+            try:
+                # Load the configuration file
+                with open(config_file_path, 'r') as f:
+                    model_config = json.load(f)
+
+                # Validate the required keys in the configuration
+                required_keys = ['window_size', 'window_increment', 'deadband', 'thr_angle_mf1', 'thr_angle_mf2', 'gain_mf1', 'gain_mf2']
+                if all(key in model_config for key in required_keys):
+                    print("Using existing model configuration.")
+                else:
+                    raise ValueError("Configuration file is missing required keys.")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error loading configuration file: {e}. Creating default configuration.")
+                model_config = self._create_default_model_config(config_file_path)
+        else:
+            # Create a default configuration if the file doesn't exist
+            print("Configuration file not found. Creating default configuration.")
+            model_config = self._create_default_model_config(config_file_path)
+
+        # Use the configuration to set up the model
+        WINDOW_SIZE = model_config['window_size']
+        WINDOW_INCREMENT = model_config['window_increment']
+        DEADBAND = model_config['deadband']
+
+        # Set the data folder based on the model type
+        if self.regression_selected():
+            data_folder = 'data/regression'
+        else:
+            data_folder = 'data/classification'
+
+        # Load and process training data 
         with open(data_folder + '/collection_details.json', 'r') as f:
             collection_details = json.load(f)
-        
+  
         def _match_metadata_to_data(metadata_file: str, data_file: str, class_map: dict) -> bool:
             """
-            Ensures the correct animation metadata file is matched with the correct EMG data file.
+            Ensures the correct class labels file is matched with the correct EMG data file.
 
             Args:
                 metadata_file (str): Metadata file path (e.g., "animation/collection_hand_open_close.txt").
@@ -198,7 +260,7 @@ class TrainingProtocol:
         motion_names = collection_details['classes']
         class_map = collection_details['class_map']
         
-        # TODO: add regex-filter for classification. Only support regression for now. Changed 22.04. The same regexfilter for both since data-folder is changed further up. 
+        # The same regexfilter for both classification and regression since data-folder is changed further up. 
         regex_filters = [
                 RegexFilter(left_bound = data_folder + "/C_", right_bound="_R", values = [str(i) for i in range(num_motions)], description='classes'),
                 RegexFilter(left_bound = "R_", right_bound="_emg.csv", values = [str(i) for i in range(num_reps)], description='reps')
@@ -214,33 +276,16 @@ class TrainingProtocol:
             labels_key = 'classes'
             metadata_operations = None
 
-        # Step 1: Parse offline training data THIS IS OLD, CHANGED IN MY CODE
-        # if self.regression_selected():
-        #     regex_filters = [
-        #         RegexFilter(left_bound='regression/C_0_R_', right_bound='_emg.csv', values=['0', '1', '2'], description='reps')
-        #     ]
-        #     metadata_fetchers = [
-        #         FilePackager(RegexFilter(left_bound='animation/', right_bound='.txt', values=['collection'], description='labels'), package_function=lambda x, y: True)
-        #     ]
-        #     labels_key = 'labels'
-        #     metadata_operations = {'labels': 'last_sample'}
-        # else:
-        #     regex_filters = [
-        #         RegexFilter(left_bound = "classification/C_", right_bound="_R", values = ["0","1","2","3","4"], description='classes'),
-        #         RegexFilter(left_bound = "R_", right_bound="_emg.csv", values = ["0", "1", "2"], description='reps'),
-        #     ]
-        #     metadata_fetchers = None
-        #     labels_key = 'classes'
-        #     metadata_operations = None
-
+       # Parse to training data
         odh = OfflineDataHandler()
         odh.get_data('./', regex_filters, metadata_fetchers=metadata_fetchers, delimiter=",")
         train_windows, train_metadata = odh.parse_windows(WINDOW_SIZE, WINDOW_INCREMENT, metadata_operations=metadata_operations)
 
         # Step 2: Extract features from offline data
         fe = FeatureExtractor()
-        feature_list = fe.get_feature_groups()['HTD']
-        training_features = fe.extract_features(feature_list, train_windows, array=True)
+        if self.feature_list is None:    
+            self.feature_list = fe.get_feature_groups()['HTD'] # Default feature list is HTD features.
+        training_features = fe.extract_features(self.feature_list, train_windows, array=True)
 
         # Step 3: Dataset creation
         data_set = {}
@@ -253,13 +298,13 @@ class TrainingProtocol:
         if self.regression_selected():
             emg_model = EMGRegressor(model=model)
             emg_model.fit(feature_dictionary=data_set)
-            #emg_model.add_deadband(0.1) # Add a deadband to the regression model. Value below this threshold will be considered 0.
-            self.model = OnlineEMGRegressor(emg_model, WINDOW_SIZE, WINDOW_INCREMENT, self.odh, feature_list, std_out=True)
+            emg_model.add_deadband(DEADBAND) # Add a deadband to the regression model. Value below this threshold will be considered 0.
+            self.model = OnlineEMGRegressor(emg_model, WINDOW_SIZE, WINDOW_INCREMENT, self.odh, self.feature_list, std_out=True)
         else:
             emg_model = EMGClassifier(model=model)
             emg_model.fit(feature_dictionary=data_set)
             emg_model.add_velocity(train_windows, train_metadata[labels_key])
-            self.model = OnlineEMGClassifier(emg_model, WINDOW_SIZE, WINDOW_INCREMENT, self.odh, feature_list, output_format='probabilities', std_out=True)
+            self.model = OnlineEMGClassifier(emg_model, WINDOW_SIZE, WINDOW_INCREMENT, self.odh, self.feature_list, output_format='probabilities', std_out=True)
 
         # Step 5: Create online EMG model and start predicting.
         print('Model fitted and running!')
@@ -329,7 +374,7 @@ class TrainingProtocol:
         # Convert into 2D (N x M) array with isolated sinusoids per DOF
         coordinates = np.expand_dims(np.concatenate(coordinates, axis=0), axis=1)
         return coordinates
-
+    
     def regression_selected(self):  
         return self.model_type.get() == 2
     
@@ -338,4 +383,4 @@ class TrainingProtocol:
         self.window.destroy()
 
 if __name__ == "__main__":
-    train = TrainingProtocol()
+    train = SimultaneousProsthesisControl()

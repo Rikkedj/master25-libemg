@@ -95,8 +95,7 @@ class ModelConfigPanel:
         self.UDP_IP = "127.0.0.1"
         self.UDP_PORT = 5005
 
-        self.widget_tags = {"configuration": ['__mc_configuration_window', '__mc_deadband', '__mc_thr_angle_mf1', '__mc_thr_angle_mf2', '__mc_gain_mf1', '__mc_gain_mf2', '__mc_window_size', '__mc_window_increment'],
-                            "save_dialog": ['save_config_tag']}                           
+        self.widget_tags = {"configuration": ['__mc_configuration_window', '__mc_deadband', '__mc_thr_angle_mf1', '__mc_thr_angle_mf2', '__mc_gain_mf1', '__mc_gain_mf2', '__mc_window_size', '__mc_window_increment', 'save_config_tag']}                           
                
 
     def cleanup_window(self, window_name): # Don't really know what this does
@@ -264,8 +263,6 @@ class ModelConfigPanel:
         self._save_configuration_to_file(file_path)
 
 
-
-
     def _save_configuration_to_file(self, file_path: Path):
         """Saves the current configuration to a file."""
         try:
@@ -282,7 +279,7 @@ class ModelConfigPanel:
 
     def reset_model_callback(self):
         #stop plotting with controller, reset controller or something
-       #self.configuration["running"] = False
+        #self.configuration["running"] = False
         self.stop_prediction_plot()
         self.stop_controller()
         if self.model is not None: self.model.stop_running()
@@ -349,6 +346,7 @@ class ModelConfigPanel:
         self.start_prediction_plot()       
 
         self.cleanup_window("configuration")
+
         self.spawn_configuration_window()
         
 
@@ -475,8 +473,8 @@ class ModelConfigPanel:
             emg_model = EMGRegressor(model=model)
             emg_model.fit(feature_dictionary=data_set)
             # consider adding a threshold angle here, or just do this when setting up the controller
-            emg_model.add_deadband(self.deadband) # Add a deadband to the regression model. Value below this threshold will be considered 0.
-            self.model = OnlineEMGRegressor(emg_model, self.window_size, self.window_increment, self.gui.online_data_handler, feature_list, ip=self.UDP_IP, port=self.UDP_PORT)
+            #emg_model.add_deadband(self.deadband) # Add a deadband to the regression model. Value below this threshold will be considered 0.
+            self.model = OnlineEMGRegressor(emg_model, self.window_size, self.window_increment, self.gui.online_data_handler, feature_list, ip=self.UDP_IP, port=self.UDP_PORT, std_out=True)
         else:
             # Classification
             emg_model = EMGClassifier(model=model)
@@ -519,7 +517,8 @@ class PredictionPlotter:
                 }):
         # self.config = config
         # self.pred_queue = pred_queue
-        self.axis_media_paths = axis_media_paths
+        #self.axis_media_paths = axis_media_paths
+        self.axis_media = axis_media_paths # This is the dictionary with the images/videos to be displayed in the plot
         self.loaded_media = {}  # Stores {'location': ('type', media_object)}
         self.media_artists = {} # Stores {'location': AxesImage artist}
         self.video_caps = {}    # Stores {'location': cv2.VideoCapture} for cleanup
@@ -529,57 +528,69 @@ class PredictionPlotter:
         #self.axis_media = axis_media
         self._load_all_media() # Load media during initialization
 
-    def _load_media(self, location, file_path):
-        """Loads media (image or video) from a file path."""
-        #file_path = Path(file_path)
-        if not file_path.exists():
-            warnings.warn(f"Media file not found at {file_path}. Skipping {location}.")
-            return None, None # Return None if file doesn't exist
-
-        ext = file_path.suffix.lower()
-
-        try:
-            if ext in SUPPORTED_IMAGE_EXTENSIONS:
-                img = PILImage.open(file_path)
-                # Ensure image is in RGB or RGBA for matplotlib
-                if img.mode not in ['RGB', 'RGBA']:
-                     img = img.convert('RGB')
-                return 'image', img
-            
-            elif ext in SUPPORTED_VIDEO_EXTENSIONS:
-                cap = cv2.VideoCapture(str(file_path))
-                if not cap.isOpened():
-                    warnings.warn(f"Could not open video file: {file_path}. Skipping {location}.")
-                    return None, None
-                ret, frame = cap.read()
-                if not ret:
-                    warnings.warn(f"Could not read first frame from video: {file_path}. Skipping {location}.")
-                    cap.release()
-                    return None, None
-                # Convert BGR (OpenCV default) to RGB (Matplotlib default)
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.video_caps[location] = cap # Store for later access and release
-                return 'video', frame_rgb # Return the first frame for initial display
-            else:
-                warnings.warn(f"Unsupported file extension '{ext}' for {file_path}. Skipping {location}.")
+    def _load_media(self, location, media):
+        '''Loads media (image or video) from a file path or uses the media directly if provided.'''
+        if isinstance(media, (PILImage.Image, np.ndarray)): 
+            # Media is already loaded as an image or video frame
+            if isinstance(media, PILImage.Image):
+                print(f"Using preloaded image for {location}.")
+                return 'image', media
+            elif isinstance(media, np.ndarray):
+                print(f"Using preloaded video frame for {location}.")
+                return 'video', media
+        elif isinstance(media, Path):
+            # Media is provided as a file path, load it
+            if not media.exists():
+                warnings.warn(f"Media file not found at {media}. Skipping {location}.")
                 return None, None
-        except Exception as e:
-            warnings.warn(f"Error loading media {file_path} for {location}: {e}")
-            # Ensure capture is released if error occurred during video loading
-            if 'cap' in locals() and isinstance(cap, cv2.VideoCapture) and cap.isOpened():
-                cap.release()
-            return None, None
+
+            ext = media.suffix.lower()
+
+            try:
+                if ext in SUPPORTED_IMAGE_EXTENSIONS:
+                    img = PILImage.open(media)
+                    # Ensure image is in RGB or RGBA for matplotlib
+                    if img.mode not in ['RGB', 'RGBA']:
+                        img = img.convert('RGB')
+                    return 'image', img
+
+                elif ext in SUPPORTED_VIDEO_EXTENSIONS:
+                    cap = cv2.VideoCapture(str(media))
+                    if not cap.isOpened():
+                        warnings.warn(f"Could not open video file: {media}. Skipping {location}.")
+                        return None, None
+                    ret, frame = cap.read()
+                    if not ret:
+                        warnings.warn(f"Could not read first frame from video: {media}. Skipping {location}.")
+                        cap.release()
+                        return None, None
+                    # Convert BGR (OpenCV default) to RGB (Matplotlib default)
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    self.video_caps[location] = cap  # Store for later access and release
+                    return 'video', frame_rgb  # Return the first frame for initial display
+                else:
+                    warnings.warn(f"Unsupported file extension '{ext}' for {media}. Skipping {location}.")
+                    return None, None
+            except Exception as e:
+                warnings.warn(f"Error loading media {media} for {location}: {e}")
+                # Ensure capture is released if error occurred during video loading
+                if 'cap' in locals() and isinstance(cap, cv2.VideoCapture) and cap.isOpened():
+                    cap.release()
+                return None, None
+        else:
+            warnings.warn(f"Unsupported media type for {location}. Expected Path, PIL.Image, or np.ndarray.")
+            return None, None   
 
     def _load_all_media(self):
         """Loads all media specified in axis_media_paths."""
         print("Loading axis media...")
-        for location, path in self.axis_media_paths.items():
-            media_type, media_data = self._load_media(location, path)
+        for location, media in self.axis_media.items():
+            media_type, media_data = self._load_media(location, media)
             if media_type:
                 self.loaded_media[location] = (media_type, media_data)
-                print(f"  Loaded {media_type} for {location}: {os.path.basename(path)}")
+                print(f"  Loaded {media_type} for {location}")#: {os.path.basename(path)}")
             else:
-                 print(f"  Failed to load media for {location}: {os.path.basename(path)}")
+                 print(f"  Failed to load media for {location}")#: {os.path.basename(path)}")
         print("Finished loading axis media.")
                     
     def _initialize_plot(self, config):

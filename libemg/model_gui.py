@@ -4,32 +4,41 @@ import inspect
 from libemg._gui._model_config_panel import ModelConfigPanel # Could remove this to my own folder or something to make it clear its made by me
 
 
-class ML_GUI:
+class ML_GUI: # Kalle det CONTROL_SYSTEM_GUI elns?
     '''
-    The GUI for configuring the prediction model, either the classifier or the regressor.
+    The GUI for configuring the prediction model, either the classifier or the regressor, and the controller.
 
     Parameters
     ----------
     online_data_handler : OnlineDataHandler
-        The online data handler that is used to get the data from the streamer.
+        The online data handler that is used to get the data from the streamer. 
     args : dict
-        The arguments that are used to configure the model. This is a dictionary with the following keys
-
+        The arguments that are used to configure the controller. This is a dictionary with the following keys:
+            'window_size' : int
+                The window size for when training the prediction model.
+            'window_increment': int
+                The window increment for when training the prediction model.
+            'thr_mf1': float
+                The threshold for the first motor function.
+            'thr_mf2': float
+                The threshold for the second motor function.
+            'gain_mf1': float
+                The gain for the first motor function.
+            'gain_mf2': float
+                The gain for the second motor function.
+            'deadband': float
+                The deadband for the prediction model. If the prediction is within this range, the prediction will be set to 0.
     axis_media : dict
         Dictionary mapping compass directions to media (image or video). Media will be displayed in the corresponding compass direction (i.e., 'N' correponds to the top of the image).
         Valid keys are 'NW', 'N', 'NE', 'W', 'E', 'SW', 'S', 'SE'. If None, no media will be displayed. The media shows the motor functions that are being predicted.
     model_str : str
-        The classification or regression model used, given as string.
+        The prediction model used, given as string.
     width : int
         The width of the GUI window.
     height : int
         The height of the GUI window.
     debug : bool CHECK THIS PUT. DON'T KNOW IF ITS NECESSEARY
         If True, the GUI will run in debug mode. This means that the GUI will not be closed when the user clicks the close button. Instead, the GUI will be stopped and the program will continue to run.
-    plot_width : int
-        The width of the plot window.
-    plot_height : int
-        The height of the plot window.
     regression_selected : bool
         If True, the regression model is selected. This is used to determine which model to use for prediction.
 
@@ -39,30 +48,25 @@ class ML_GUI:
                  args,
                  axis_media=None,
                  model_str=None,
-                 training_data_folder = './data/', # added 22.04 -> think this is chosen in TrainingProtocl,
+                 training_data_folder = './data/', # added 22.04 -> think this is chosen in main window
                  width=1700,
                  height=1080,
-                 debug=False,
-                 plot_width = 500,
-                 plot_height = 500,
+                 debug=False, # Not shure if this is necessary
                  regression_selected=False,
                  clean_up_on_kill=False):
         
         self.width = width
         self.height = height
-        self.debug = debug # Usikker på hva denne er til, kan være den ikke trengs
         self.online_data_handler = online_data_handler
         self.axis_media = axis_media
         self.model_str = model_str
         self.args = args
-        self.window = None
-        self.plot_width = plot_width
-        self.plot_height = plot_height
         self.regression_selected = regression_selected # Bool that tells if the regression model is selected, gotten from function in TrainingProtocol
-        self.clean_up_on_kill = clean_up_on_kill
         self.training_data_folder = training_data_folder
-        #self.initialize_ui()
-        #self.window.mainloop()
+        
+        self.debug = debug # Usikker på hva denne er til, kan være den ikke trengs
+        self.clean_up_on_kill = clean_up_on_kill # Not shure what this is either, but is used in the GUI class
+        
 
     def start_gui(self):
         """
