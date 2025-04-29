@@ -1,7 +1,6 @@
 import dearpygui.dearpygui as dpg
 import os
 import json
-import libemg
 
 from pathlib import Path
 from PIL import Image as PILImage
@@ -90,6 +89,7 @@ class ModelConfigPanel:
         self.model = None
         self.prediction_queue = Queue()
         self.plot_process = None
+        self.prosthesis_controller = None
         
         # Communication with the controller
         self.UDP_IP = "127.0.0.1"
@@ -268,6 +268,7 @@ class ModelConfigPanel:
         try:
             # Ensure parent directory exists
             file_path.parent.mkdir(parents=True, exist_ok=True)
+
             # Convert Manager.dict proxy to a standard dict 
             config_to_save = dict(self.configuration)
             with open(file_path, 'w') as f:

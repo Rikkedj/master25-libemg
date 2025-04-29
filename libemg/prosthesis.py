@@ -7,17 +7,12 @@ import json
 
 class Prosthesis:
     """
-    Class representing a prosthetic device.
+    Class for communicating with prosthetic device.
     """
 
     def __init__(self):
         """
         Initialize the Prosthesis object.
-
-        :param name: Name of the prosthesis.
-        :param type: Type of the prosthesis (e.g., leg, arm).
-        :param manufacturer: Manufacturer of the prosthesis.
-        :param model: Model of the prosthesis.
         """
         self.serial_port = "COM3"  # Default serial port (change as needed)
         self.baudrate = 9600
@@ -27,12 +22,17 @@ class Prosthesis:
     def connect(self, serial_port, baudrate=9600, timeout=1):
         """
         Establish a connection to the prosthetic device.
+        Parameters:
+        ----------
+            serial_port: The serial port to connect to (string).
+            baudrate: The baud rate for the connection (int).
+            timeout: Timeout for the connection (int).
         """
         try:
             self.connection = serial.Serial(
-                port=self.serial_port,
-                baudrate=self.baudrate,
-                timeout=self.timeout
+                port=serial_port,
+                baudrate=baudrate,
+                timeout=timeout
             )
             self.connection.flush()  # Clear input/output buffers
             print(f"Connected to prosthetic device on {self.serial_port}")
@@ -57,7 +57,9 @@ class Prosthesis:
         """
         if self.connection and self.connection.is_open:
             try:
-                self.connection.write(command.encode('utf-8'))
+                packet = bytearray(command)
+                #self.connection.write(command.encode('utf-8'))
+                self.connection.write(packet)
                 print(f"Sent command: {command}")
             except serial.SerialException as e:
                 print(f"Error: Failed to send command: {e}")
@@ -68,12 +70,12 @@ class Prosthesis:
     def is_connected(self):
         """
         Check if the device is connected.
-
-        :return: True if connected, False otherwise.
+        ----------
+        Return: True if connected, False otherwise.
         """
         return self.connection is not None and self.connection.is_open
-    
-    
+
+
 class ActuatorFunctionSelection:
     def __init__(self, prosthesis: Prosthesis = None, controller: Controller = None):
         """

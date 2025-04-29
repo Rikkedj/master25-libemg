@@ -33,7 +33,9 @@ demos/data/GRABMyo/*
 demos/data/*
 data_tmp/*
 images_tmp/*
+# Ignore virtual environment folders
 .venv
+3.10.5-venv/
 images/ 
 libemg/__init__.pyc
 test_myo.py

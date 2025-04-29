@@ -41,14 +41,15 @@ class SimultaneousProsthesisControl:
             'diagonal_2': (1, -1)*1/np.sqrt(2),              # Diagonal movement (↘)
         }
         # TODO: Add images the simultanous gestures
-        self.axis_media = {
-            'N': PILImage.open(Path('images/gestures', 'pronation.png')),
-            'S': PILImage.open(Path('images/gestures', 'supination.png')),
-            'E': PILImage.open(Path('images/gestures', 'hand_open.png')),
-            'W': PILImage.open(Path('images/gestures', 'hand_close.png')),
-            #'NE': cv2.VideoCapture(Path('images_master/videos', 'IMG_4930.MOV')),  # store path instead
-            #'NW': cv2.VideoCapture(Path('images_master/videos', 'IMG_4931.MOV'))
-        }
+        self.axis_media = None
+        # {
+        #     'N': PILImage.open(Path('images/gestures', 'pronation.png')),
+        #     'S': PILImage.open(Path('images/gestures', 'supination.png')),
+        #     'E': PILImage.open(Path('images/gestures', 'hand_open.png')),
+        #     'W': PILImage.open(Path('images/gestures', 'hand_close.png')),
+        #     #'NE': cv2.VideoCapture(Path('images_master/videos', 'IMG_4930.MOV')),  # store path instead
+        #     #'NW': cv2.VideoCapture(Path('images_master/videos', 'IMG_4931.MOV'))
+        # }
         # # ---- This is for when training with simultnoeus gestures gets implemented right ---
         # self.axis_media_paths = {
         #     'N': Path('images/gestures', 'pronation.png'),
