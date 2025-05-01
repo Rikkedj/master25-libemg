@@ -706,7 +706,7 @@ class SingleDirectionBarPlotAnimator(BarPlotAnimator):
 
 
 # 22.04 Made by me
-class MediaGridAnimator(PlotAnimator):
+class MediaGridAnimator(Animator):
     SUPPORTED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif'] 
     SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.mov']
 
