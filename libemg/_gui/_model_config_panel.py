@@ -334,7 +334,7 @@ class ModelConfigPanel:
     def prediction_btn_callback(self):
         if not (self.gui.online_data_handler and sum(list(self.gui.online_data_handler.get_data()[1].values()))):
             raise ConnectionError('Attempted to start data collection, but data are not being received. Please ensure the OnlineDataHandler is receiving data.')
-        
+        print("Starting prediction plot")
         if self.model is None:
             self.get_settings()
             self.set_up_model() # Could combine this with start_estimation, i.e. running in there
