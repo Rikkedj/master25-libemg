@@ -45,8 +45,12 @@ class GUI:
                  debug=False,
                  gesture_width = 500,
                  gesture_height = 500,
-                 clean_up_on_kill=False):
+                 clean_up_on_kill=False,
+                 axis_media=None,       # Added by Rikke 11.05
+                 motor_functions=None): # Added by Rikke 11.05
         
+        self.axis_media = axis_media            # Added by Rikke 11.05
+        self.motor_functions = motor_functions  # Added by Rikke 11.05
         self.width = width 
         self.height = height 
         self.debug = debug
@@ -104,6 +108,9 @@ class GUI:
                 #dpg.add_menu_item(label="Export Data",  callback=self._export_data_callback)
                 #dpg.add_menu_item(label="Inspect Data", callback=self._inspect_data_callback)
             
+            # with dpg.menu(label="Simultaneous Training"):
+            #    dpg.add_menu_item(label="Start Training", callback=self._simultaneous_training_callback, user_data=(self.args['data_folder'], self.args['num_reps'], self.args['rep_time'], self.args['rest_time'], self.args['auto_advance']))
+                
             # with dpg.menu(label="Visualize"):
                 # dpg.add_menu_item(label="Live Signal", callback=self._visualize_livesignal_callback)
             
@@ -190,3 +197,5 @@ class GUI:
             if download_gifs:
                 if not gif_file in files or redownload:
                     os.system(curl_commands + git_url + gif_folder + gif_file)
+
+

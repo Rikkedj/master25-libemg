@@ -1,3 +1,4 @@
+from pathlib import Path
 from collections import deque
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier, RandomForestRegressor
@@ -389,7 +390,7 @@ class EMGClassifier(EMGPredictor):
             th_max_dic[c] = th_max
         return th_min_dic, th_max_dic
 
-    def visualize(self, test_labels, predictions, probabilities):
+    def visualize(self, test_labels, predictions, probabilities, save_plot = False, save_path = None):
         """Visualize the decision stream of the classifier on the testing data. 
 
         You can call this visualize function to get a visual output of what the decision stream of what 
@@ -425,7 +426,7 @@ class EMGClassifier(EMGPredictor):
                 colors[class_label] = val.get_facecolors().tolist()
             
         # Plot decision stream
-        plt.title("Decision Stream")
+        plt.title(f"Decision Stream for {self.model}")
         plt.xlabel("Class Output")
         plt.ylabel("Probability")
         for g in np.unique(predictions):
@@ -436,6 +437,13 @@ class EMGClassifier(EMGPredictor):
                 plt.scatter(i, probabilities[i], label=g, alpha=1, color=colors[g])
         
         plt.legend(loc='lower right')
+        if save_plot:
+            if save_path is None:
+                raise ValueError("Please provide a valid path to save the plot.")
+            save_path = Path(save_path)
+            # Ensure save_path exists, creating it if needed
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
         plt.show()
     
 
@@ -474,6 +482,7 @@ class EMGRegressor(EMGPredictor):
         if convert_to_multioutput:
             model = MultiOutputRegressor(model)
         self.deadband_threshold = deadband_threshold
+        self.fi = None  # Added by Rikke 21.05 - to use filter on predictions (FlutterFilter)
         super().__init__(model, model_parameters, random_seed=random_seed, fix_feature_errors=fix_feature_errors, silent=silent)
 
     
@@ -492,13 +501,28 @@ class EMGRegressor(EMGPredictor):
         test_data = self._format_data(test_data)
         predictions = self._predict(test_data)
 
+        # This was made by Rikke 21.05 - don't think it worked but forgot to remove TODO: double check
+        if self.fi is not None:
+            # Apply filter to predictions
+            predictions = self.fi.filter(predictions) # NOTE! this does not work with integrator since we are integrating the whole dataset. Maybe it works in real-time prediction
+
         # Set values within deadband to 0
         deadband_mask = np.abs(predictions) < self.deadband_threshold
         predictions[deadband_mask] = 0.
 
         return predictions
+    
+    def install_filter(self, filter):
+        """Install a filter on the regressor predictions.
 
-    def visualize(self, test_labels, predictions):
+        Parameters
+        ----------
+        filter: object
+            A filter object that will be used to filter the predictions.
+        """
+        self.fi = filter
+    
+    def visualize(self, test_labels, predictions, save_plot = False, save_path = None, mf_labels_dict = None, dof_titles = None):
         """Visualize the decision stream of the regressor on test data.
 
         You can call this visualize function to get a visual output of what the decision stream looks like.
@@ -507,13 +531,23 @@ class EMGRegressor(EMGPredictor):
         :type test_labels: N x M array, where N = # samples and M = # DOFs, containing the labels for the test data.
         :param predictions: np.ndarray
         :type predictions: N x M array, where N = # samples and M = # DOFs, containing the predictions for the test data.
+        NOTE: The last four is added by Rikke 21.05.2025
+        :param save_plot: bool, optional
+            If True, the plot will be saved to the specified path. Defaults to False.
+        :param save_path: str, optional
+            The path where the plot will be saved. Required if save_plot is True.
+        :param mf_labels_dict : list of dicts, optional
+            A list with length M (one for each Motor Function (mf)/DOF)), where each dict maps values on y-axis (e.g., 1, -1) to class names.
+        :param dof_titles : list, optional
+            A list like [motor function 1, motor function 2]
+            Used to title each subplot. Must be of length M (number of DOFs).
         """
         assert len(predictions) > 0, 'Empty list passed in for predictions to visualize.'
 
         # Formatting
         plt.style.use('ggplot')
         fig, axs = plt.subplots(nrows=test_labels.shape[1], ncols=1, sharex=True, layout='constrained')
-        fig.suptitle('Decision Stream')
+        fig.suptitle(f'Decision Stream for {self.model.estimator}')
         fig.supxlabel('Prediction Index')
         fig.supylabel('Model Output')
 
@@ -523,13 +557,31 @@ class EMGRegressor(EMGPredictor):
         x = np.arange(test_labels.shape[0])
         handles = [mpatches.Patch(color=label_color, label='Labels'), mlines.Line2D([], [], color=pred_color, marker='o', markersize=marker_size, linestyle='None', label='Predictions')]
         for dof_idx, ax in enumerate(axs):
-            ax.set_title(f"DOF {dof_idx}")
+            if dof_titles and dof_idx < len(dof_titles):
+                ax.set_title(f"{dof_titles[dof_idx]}")
+            else: 
+                ax.set_title(f"DOF: {dof_idx}")
             ax.set_ylim((-1.05, 1.05))
             ax.xaxis.grid(False)
             ax.fill_between(x, test_labels[:, dof_idx], alpha=0.5, color=label_color)
             ax.scatter(x, predictions[:, dof_idx], color=pred_color, s=marker_size)
+            # Annotate y-axis labels if mf_labels_dict is provided
+            if mf_labels_dict and dof_idx < len(mf_labels_dict):
+                for val, label in mf_labels_dict[dof_idx].items():
+                    ax.axhline(y=val, color='gray', linestyle='--', linewidth=0.5)
+                    ax.text(-0.05, val, label, transform=ax.get_yaxis_transform(),
+                            ha='right', va='center', fontsize=8, color='black')
 
         fig.legend(handles=handles, loc='upper right')
+        
+        if save_plot:
+            if save_path is None:
+                raise ValueError("Please provide a valid path to save the plot.")
+            save_path = Path(save_path)
+            # Ensure save_path exists, creating it if needed
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        
         plt.show()
         
 
@@ -876,6 +928,7 @@ class OnlineEMGClassifier(OnlineStreamer):
         self.previous_predictions = deque(maxlen=self.predictor.majority_vote)
         self.smi = smm_items
         
+
     def run(self, block=True):
         """Runs the classifier - continuously streams predictions over UDP.
 
@@ -883,7 +936,7 @@ class OnlineEMGClassifier(OnlineStreamer):
         ----------
         block: bool (optional), default = True
             If True, the run function blocks the main thread. Otherwise it runs in a 
-            seperate process.
+            seperate process. 
         """
         self.start_stream(block)
 
@@ -963,6 +1016,7 @@ class OnlineEMGClassifier(OnlineStreamer):
             self.sock.sendto(bytes(message, 'utf-8'), (self.ip, self.port))
         else:
             self.conn.sendall(str.encode(message))
+
 
     def visualize(self, max_len=50, legend=None):
         """Produces a live plot of classifier decisions -- Note this consumes the decisions.
@@ -1094,7 +1148,7 @@ class OnlineEMGRegressor(OnlineStreamer):
         super(OnlineEMGRegressor, self).__init__(offline_regressor, window_size, window_increment, online_data_handler, file_path,
                                                  file, smm, smm_items, features, port, ip, std_out, tcp, feature_queue_length)
         self.smi = smm_items
-        #self.visualize_signal = Event() # added by me
+        self.fi = None          # Updated by Rikke 21.05 - to use filter on predictions (FlutterFilter)
         
     def run(self, block=True):
         """Runs the regressor - continuously streams predictions over UDP or TCP.
@@ -1112,6 +1166,15 @@ class OnlineEMGRegressor(OnlineStreamer):
         """
         self.process.terminate()
 
+    def install_filter(self, filter):
+        """Install a filter to the classifier output. 
+        Parameters
+        ----------
+        filter: FlutterFilter #TODO: Change this to be several filters
+            A filter object that will be used to filter the classifier output.
+        """
+        self.fi = filter
+    
     def write_output(self, model_input, window):
         # Make prediction
         predictions = self.predictor.run(model_input).squeeze()
@@ -1180,6 +1243,9 @@ class OnlineEMGRegressor(OnlineStreamer):
         predictions = None
         while predictions is None:
             predictions = controller.get_data('predictions')
+            if self.fi:
+                predictions = self.fi.filter(predictions)
+
         cmap = cm.get_cmap('turbo', len(predictions))
 
         plots = [ax.plot([], [], '.', color=cmap.colors[dof_idx], alpha=0.8)[0] for dof_idx in range(len(predictions))]

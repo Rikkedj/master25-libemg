@@ -27,7 +27,7 @@ import matplotlib.image as mpimg
 import re
 import warnings
 
-# Class made by me
+# Class made by me - TODO: Change this with the parameterAdjustment from my project
 class ModelConfigPanel:
     '''
     The Model Configuration Panel for configuring the machine learning model. 

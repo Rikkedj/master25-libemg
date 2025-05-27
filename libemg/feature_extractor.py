@@ -2,6 +2,8 @@ import math
 import numpy as np
 import numpy.matlib as matlib
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib import cm
 from sklearn.decomposition import PCA, KernelPCA, FastICA
 from sklearn.manifold import TSNE, Isomap
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
@@ -9,6 +11,7 @@ from scipy.stats import skew, kurtosis
 from librosa import lpc
 from pywt import wavedec, upcoef
 from sklearn.preprocessing import StandardScaler
+from multiprocessing import Process
 
 class FeatureExtractor:
     """
@@ -93,7 +96,8 @@ class FeatureExtractor:
                         "WV",
                         "WWL",
                         "WENT",
-                        "MEAN"]
+                        "MEAN",
+                        "MYOP"] # Added 13.05 by Rikke
         return feature_list
         
     def get_projection_list(self):
@@ -1527,8 +1531,39 @@ class FeatureExtractor:
             The computed features associated with each window. 
         """
         return np.mean(windows, -1)
+    # Added 13.05 by Rikke
+    def getMYOPfeat(self, windows, MYOP_threshold=0.09) :
+        """Extract Myopulse (MYOP) feature.
+        
+        Parameters
+        ----------
+        windows: list 
+            A list of windows - should be computed directly from the OfflineDataHandler or the utils.get_windows() method.
+        Returns
+        ----------
+        list
+            The computed features associated with each window. 
+        """
+        # Convert to NumPy array if it's a list
+        #windows = np.asarray(windows)
+        
+        # Binary mask where absolute value exceeds threshold
+        myop_mask = np.abs(windows) > MYOP_threshold  # shape: [n_windows, n_channels, n_samples]
 
-    def visualize(self, feature_dic):
+        # Take average over the samples axis (i.e., axis=2)
+        features = np.mean(myop_mask, axis=2)
+
+        return features
+    
+    # NOTE! Done some modifications so that it can run in thread with GUI
+    def visualize(self, feature_dic, class_names = {}, num_reps=1, block=True, save_path=None, save_plot=False):
+        if block:
+            self._visualize(feature_dic, class_names, num_reps, save_path, save_plot)
+        else:
+            p = Process(target=self._visualize, args=(feature_dic, class_names, num_reps, save_path, save_plot), daemon=True)
+            p.start()
+
+    def _visualize(self, feature_dic, class_names = {}, num_reps=1, save_path=None, save_plot=False):
         """Visualize a set of features.
         
         Parameters
@@ -1536,29 +1571,200 @@ class FeatureExtractor:
         feature_dic: dict
             A dictionary consisting of the different features. This is the output from the 
             extract_features method.
+        class_names: dict, default={}
+            A list of class names to be used for labeling the features. If empty, no labels will be used.
+        num_reps: int, default=1
+            The number of repetitions to visualize the features. This is useful for visualizing features across multiple repetitions.
+        """
+        # plt.style.use('ggplot')
+    
+        # if len(feature_dic) > 1:
+        #     fig, ax = plt.subplots(len(feature_dic))
+        #     index = 0
+        #     labels = []
+        #     for f in feature_dic:
+        #         total_n_windows, n_channels = feature_dic[f].shape
+        #         n_windows_per_class = total_n_windows // len(class_names) if class_names else total_n_windows
+        #         for i in range(0,len(feature_dic[f][0])):
+        #             x = list(range(0,len(feature_dic[f])))
+        #             lab = "CH"+str(i+1)
+        #             ax[index].plot(x, feature_dic[f][:], label=lab)
+        #             if not lab in labels:
+        #                 labels.append(lab)
+        #             ax[index].set_ylabel(f)
+        #         index += 1
+        #         fig.suptitle('Features')
+        #         fig.legend(labels, loc='lower right')
+        # else:
+        #     key = list(feature_dic.keys())[0]
+        #     plt.title(key)
+        #     plt.plot(list(range(0,len(feature_dic[key]))), feature_dic[key])
+        # plt.show()
+        plt.style.use('ggplot')
+
+        n_features = len(feature_dic)
+        fig, ax = plt.subplots(n_features, figsize=(10, 3 * n_features), sharex=True)
+        cmap = cm.get_cmap('Pastel1')  # or 'tab10', 'Set2', etc.
+        class_colors = [cmap(i / len(class_names)) for i in range(len(class_names))]
+
+        if not len(feature_dic) > 1:
+            ax = [ax]
+
+        labels = []
+        for idx, (f_name, data) in enumerate(feature_dic.items()):
+            data = np.array(data)
+            total_n_windows, n_channels = data.shape
+            x = np.arange(total_n_windows)
+
+            channel_map = cm.get_cmap('tab20', n_channels)  # or 'tab10', 'Set2', etc.
+            channel_colors = ['tab:blue', 'darkolivegreen', 'tab:green', 'tab:red', 'tab:purple', 'tab:orange' ] #[channel_map(i) for i in range(n_channels)]
+            # Plot each channel
+            for ch in range(n_channels):
+                lab = f"Ch {ch + 1}"
+                ax[idx].plot(x, data[:, ch], label=lab, color=channel_colors[ch], linewidth=1.0)
+                if lab not in labels:
+                    labels.append(lab)
+
+            ax[idx].set_ylabel(f_name)
+
+            # Add background color and class name labels if class_names is provided
+            y_min, y_max = ax[idx].get_ylim()
+            if class_names:
+                n_classes = len(class_names)
+                n_windows_per_class = total_n_windows // n_classes
+                if n_classes > 1:
+                    for i, (class_idx, class_name) in enumerate(class_names.items()):
+                        start = i * n_windows_per_class
+                        end = (i + 1) * n_windows_per_class if i < n_classes - 1 else total_n_windows
+                        color = class_colors[i % len(class_colors)]  # Loop if more classes than colors
+                        rect = patches.Rectangle((start, y_min), end - start, y_max - y_min,
+                                                linewidth=0, facecolor=color, alpha=0.3, zorder=0)
+                        ax[idx].add_patch(rect)
+                        # Only add class label on the bottom-most plot
+                        if idx == n_features - 1:
+                            ax[idx].text((start + end) / 2, y_min - 0.12 *  (y_max - y_min),
+                                        class_name, ha='center', va='top', fontsize=9, color='dimgray', rotation=0)
+                else:
+                    n_windows_per_rep = total_n_windows // num_reps
+                    cmap = cm.get_cmap('Pastel2')
+                    for i in range(num_reps):
+                        start = i * n_windows_per_rep
+                        end = (i + 1) * n_windows_per_rep
+                        color = cmap(i % cmap.N)
+                        ax[idx].add_patch(
+                                    patches.Rectangle(
+                                        (start, y_min), end - start, y_max - y_min,
+                                        color=color, alpha=0.3, zorder=0
+                                    )
+                                )
+                        ax[idx].text(total_n_windows / 2, y_min - 0.12 * (y_max - y_min),
+                                      next(iter(class_names.values())), ha='center', va='top', fontsize=8, color='dimgray', rotation=0)
+                       
+        # Place channel legend in top-right in 1–2 rows
+        fig.legend(labels, loc='upper right', bbox_to_anchor=(0.9, 0.98), ncol=3, fontsize=9)
+
+        fig.suptitle('Features')
+        ax[-1].set_xlabel("Window Index", labelpad=15)
+        #fig.legend(labels, loc='lower right')
+        plt.tight_layout(rect=[0, 0.5, 0, 1])  # Adjust layout to make room for the title
+        if save_plot and save_path is not None:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.show()
+
+    # NOTE! Made by me 09.05
+    def visualize_with_time(self, feature_dic, sampling_time, window_size, window_increment, block=True, title="Features"):
+        """Visualize a set of features with time.
+        
+        Parameters
+        ----------
+        feature_dic: dict
+            A dictionary consisting of the different features. This is the output from the 
+            extract_features method.
+        window_size: int
+            The size of the window used to compute the features.
+        window_increment: int
+            The increment used to compute the features.
+        """
+        if block:
+            self._visualize_with_time(feature_dic, sampling_time, window_size, window_increment, title=title)   
+        else:
+            p = Process(target=self._visualize_with_time, args=(feature_dic, sampling_time, window_size, window_increment, title), daemon=True)
+            p.start()
+
+    def _visualize_with_time(self, feature_dic, sampling_time, window_size, window_increment, class_names = {},title="Features"):
+        """
+        Plot features against time instead of window index.
+        
+        Parameters
+        ----------
+        feature_dic : dict
+            Dictionary with feature names as keys and feature data as values.
+            Each value is a list of N windows, each containing M channels.
+        window_increment : float
+            Time between start of each window, in samples
+        window_size : float
+            In samples.
         """
         plt.style.use('ggplot')
-        if len(feature_dic) > 1:
-            fig, ax = plt.subplots(len(feature_dic))
+        
+        if len(feature_dic) > 1: # More than one feature
+            # Create a figure with subplots for each feature
+            fig, ax = plt.subplots(len(feature_dic), figsize=(10, 3 * len(feature_dic)), sharex=True)
             index = 0
             labels = []
-            for f in feature_dic:
-                for i in range(0,len(feature_dic[f][0])):
-                    x = list(range(0,len(feature_dic[f])))
-                    lab = "CH"+str(i+1)
-                    ax[index].plot(x, feature_dic[f][:], label=lab)
-                    if not lab in labels:
+
+            for feat_name in feature_dic:
+                data = feature_dic[feat_name]  # Shape: [n_windows][n_channels]
+                total_n_windows, n_channels = data.shape
+
+                n_windows_per_class = total_n_windows // len(class_names) if class_names else total_n_windows
+                
+                #total_time = (total_n_windows * window_increment + window_size) / 2000 # Assuming sampling frequency is 2000 Hz
+                # time_stamps = [
+                #     i * window_increment + window_size / 2 for i in range(n_windows)
+                # ]
+                time_vec = np.linspace(0, total_time, n_windows)
+                for ch in range(n_channels):
+                    y_vals = [window[ch] for window in data]
+                    lab = f"Channel {ch+1}"
+                    ax[index].plot(time_vec, y_vals, label=lab)
+                    if lab not in labels:
                         labels.append(lab)
-                    ax[index].set_ylabel(f)
+
+                ax[index].set_ylabel(feat_name)
                 index += 1
-                fig.suptitle('Features')
-                fig.legend(labels, loc='lower right')
+
+            fig.suptitle(title)
+            ax[-1].set_xlabel("Time (s)")
+            fig.legend(labels, loc='lower right')
+            plt.tight_layout()
+            plt.show()
+
         else:
+            # Only one feature
             key = list(feature_dic.keys())[0]
+            data = feature_dic[key]
+            n_windows = len(data)
+            n_channels = len(data[0])
+
+            time_stamps = [
+                i * window_increment + window_size / 2 for i in range(n_windows)
+            ]
+
+            total_time = (n_windows * window_increment + window_size) / 2000 # Assuming sampling frequency is 2000 Hz
+            time_vec = np.linspace(0, total_time, n_windows)
+
+            plt.figure(figsize=(10, 4))
+            for ch in range(n_channels):
+                y_vals = [window[ch] for window in data]
+                plt.plot(time_vec, y_vals, label=f"CH{ch+1}")
             plt.title(key)
-            plt.plot(list(range(0,len(feature_dic[key]))), feature_dic[key])
-        plt.show()
-    
+            plt.xlabel("Time (s)")
+            plt.ylabel("Feature value")
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+
     def visualize_all_distributions(self, feature_dic, classes=None, savedir=None, render=True):
         """Visualize the distribution of each feature using a histogram. This will render the histograms all together.
         

@@ -82,63 +82,59 @@ class MotorFunctionSelector: # Made a specific controller-class for the prosthes
     Class for controlling the prosthetic device using EMG signals. Call it something else, like ActuatorFunctionSelector?
     """
 
-    def __init__(self, prosthesis = None, controller: Controller = None):
+    def __init__(self):
         """
-        Initialize the ProsthesisController object.
+        Initialize the MotorFunctionSelector object.
+        """
+        self.thr_angle_mf1 = 0.0
+        self.thr_angle_mf2 = 0.0
+
+    def get_motor_setpoints(self, pred=None, thr_angle_mf1=None, thr_angle_mf2=None):
+        """
+        Get the motor setpoints for the actuator function.
         Parameters:
         ----------
-            prosthesis: An instance of the Prosthesis class (optional).
+        pred: list
+            List of predictions for each motor function (e.g., [mf1, mf2]).
         """
-        # Tanken her er å gjøre det mer generelt, altså hente gains og thresholds utfra
-        # for hor mange predictions en leser, men er kanskje lettere 
-        #self.prosthesis = prosthesis if prosthesis else Prosthesis()
-        #self.controller = controller if controller else RegressorController() # Default to regressor controller
-        #self.gain_mf1 = 1 
-        #self.gain_mf2 = 1
-        self.thr_angle_mf1 = 0.5
-        self.thr_angle_mf2 = 0.5
-        #self.deadband = 0.1
-        #self.num_motor_functions = 2  # Number of motor functions
+        motor_setpoint = [0, 0, 0, 0] # rest
+        max_value = 1
 
-    ### This was old. Now (09.05) I have a filter function that takes care of gain and deadband. Now this clss only need to take in prediction and thresholds, and then it can calculate the motor setpoints.
-    def get_motor_setpoints(self, pred=None):
         theta = np.arctan2(pred[1], pred[0])
+        theta_deg = np.rad2deg(theta)
         mf1, mf2 = pred[0], pred[1]
-        active_mf1, active_mf2 = self._compute_active_mf(theta)
-        motor_setpoint = self.pred_to_motor_setpoints(active_mf1, active_mf2, mf1, mf2)
-        return motor_setpoint
-
-    def set_motor_setpoints(self, motor_setpoint):
-        pred = self.get_prediction()
-        if pred:
-            if np.linalg.norm(pred) < self.deadband:
-                pred[:] = 0.
-            mf1, mf2 = pred[0], pred[1]
-            theta = np.arctan2(mf2, mf1)
-            active_mf1, active_mf2 = self._compute_active_mf(theta)
-
-            motor_setpoint = self.pred_to_motor_setpoints(active_mf1, active_mf2, mf1, mf2)
-            return motor_setpoint
         
-    def pred_to_motor_setpoints(self, mf1_active, mf2_active, mf1, mf2):
+        if self.thr_angle_mf1 < abs(theta_deg) < (180 - self.thr_angle_mf1): # mf2 active
+            motor_setpoint[2 if mf2 > 0 else 3] = int(min(abs(mf2 / max_value * 255), 255))
+        if abs(theta_deg) < (90 - self.thr_angle_mf2) or abs(theta_deg) > (90 + self.thr_angle_mf2): # mf 1 active
+            motor_setpoint[0 if mf1 > 0 else 1] = int(min(abs(mf1 / max_value * 255), 255))
+        
+        
+        #active_mf1, active_mf2 = self._compute_active_mf(theta)
+        #motor_setpoint = self._pred_to_motor_setpoints(active_mf1, active_mf2, mf1, mf2)
+
+        return motor_setpoint
+        
+    def _pred_to_motor_setpoints(self, mf1_active, mf2_active, mf1, mf2):
         """
         Convert predicted class to motor setpoints.
         ------------------------------------------
         Parameters:
             mf1_active (bool): Whether motor function 1 is active.
             mf2_active (bool): Whether motor function 2 is active.
-            
+            mf1 (float): Motor function 1 value. 
+            mf2 (float): Motor function 2 value. 
         Returns:
             motor_setpoint (list): Motor setpoint values.
         """   
         motor_setpoint = [0, 0, 0, 0] # rest
-        max_value = 5
+        max_value = 1
 
         if mf1_active:
             motor_setpoint[0 if mf1 > 0 else 1] = int(min(abs(mf1 / max_value * 255), 255))
         if mf2_active:
             motor_setpoint[2 if mf2 > 0 else 3] = int(min(abs(mf2 / max_value * 255), 255))
-
+ 
         return motor_setpoint
     
     def _compute_active_mf(self, theta):
@@ -148,102 +144,14 @@ class MotorFunctionSelector: # Made a specific controller-class for the prosthes
         mf1_active, mf2_active = 0, 0
         rad2deg = np.rad2deg(theta)
 
-        #if theta > 0:  # Upper half
         if self.thr_angle_mf1 < abs(rad2deg) < (180 - self.thr_angle_mf1):
             mf2_active = 1
         if abs(rad2deg) < (90 - self.thr_angle_mf2) or abs(rad2deg) > (90 + self.thr_angle_mf2):
             mf1_active = 1
-        # else:  # Lower half
-        #     if (-180 + thresh_dof1) < rad2deg < -thresh_dof1:
-        #         dof2_active = 1
-        #     if rad2deg < (-90 - thresh_dof2) or rad2deg > (-90 + thresh_dof2):
-        #         dof1_active = 1
-
         return mf1_active, mf2_active
     
 
-    def get_prediction(self):
-        """
-        Get the prediction from the controller.
-        ----------
-        Return: Prediction data (list).
-        """
-        if not self.controller:
-            print("Controller not initialized.")
-            return None
-        
-        start_time = time.time()
-        while time.time() - start_time < 5:
-            data = self.controller.get_data(['predictions'])
-            if data:
-                print(f"Prediction data: {data}")
-                return data
-            time.sleep(0.1)
-
-    def get_num_motor_functions(self):
-        """
-        Get the number of motor functions.
-        ----------
-        Return: Number of motor functions (int).
-        """
-        if not self.controller:
-            print("Controller not initialized.")
-            return 0
-        
-        start_time = time.time()
-        while time.time() - start_time < 5:  # Wait for 5 seconds to get data
-            data = self.controller.get_data(['predictions'])
-            if data:
-                print(f"Number of motor functions: {len(data)}")
-                return len(data)
-            time.sleep(0.1)
-        
-        print("No prediction data available.")
-        return 0
-    
-    def set_parameters(self, gain_mf1=None, gain_mf2=None, thr_angle_mf1=None, thr_angle_mf2=None, deadband=None):
-        """
-        Set the configuration for the prosthetic device. NOTE! Could add checks here as well to ensure the values are within a certain range, or if they are valid values.
-        Parameters:
-        ----------
-            gains: List of gains for each motor function (list of floats).
-            thr_angle_mf1: Threshold angle for motor function 1 (float).
-            thr_angle_mf2: Threshold angle for motor function 2 (float).
-            deadband: Deadband value (float).
-        """
-        if gain_mf1:
-            self.gain_mf1 = gain_mf1
-        if gain_mf2:
-            self.gain_mf2 = gain_mf2
-        if thr_angle_mf1:
-            self.thr_angle_mf1 = thr_angle_mf1
-        if thr_angle_mf2:
-            self.thr_angle_mf2 = thr_angle_mf2
-        if deadband:
-            self.deadband = deadband
-    
-    def write_to_json(self, file_path):
-        """
-        Write the configuration to a JSON file.
-        Parameters:
-        ----------
-            folder: The folder to save the JSON file (string).
-            filename: The name of the JSON file (string).
-        """
-        config = {
-            'gain_mf1': self.gain_mf1,
-            'gain_mf2': self.gain_mf2,
-            'thr_angle_mf1': self.thr_angle_mf1,
-            'thr_angle_mf2': self.thr_angle_mf2,
-            'deadband': self.deadband,
-            'num_motor_functions': self.num_motor_functions
-        }
-        try: 
-            with open(file_path, 'w') as f:
-                json.dump(config, f, indent=4) # Save the configuration to a file
-                print(f"Configuration saved to {file_path}")
-        except Exception as e:
-            print(f"Error saving configuration: {e}")
+   
 
 # class MotorFunctionSelector:
 #     def __init__(self, prosthesis: Prosthesis = None, controller: Controller = None):
@@ -363,3 +271,85 @@ class MotorFunctionSelector: # Made a specific controller-class for the prosthes
 #                 motor_setpoint = self.pred_to_motor_setpoints()
 #                 self.prosthesis.send_command(motor_setpoint)
 #                 last_prediction = prediction
+
+#  def get_prediction(self):
+#         """
+#         Get the prediction from the controller.
+#         ----------
+#         Return: Prediction data (list).
+#         """
+#         if not self.controller:
+#             print("Controller not initialized.")
+#             return None
+        
+#         start_time = time.time()
+#         while time.time() - start_time < 5:
+#             data = self.controller.get_data(['predictions'])
+#             if data:
+#                 print(f"Prediction data: {data}")
+#                 return data
+#             time.sleep(0.1)
+
+#     def get_num_motor_functions(self):
+#         """
+#         Get the number of motor functions.
+#         ----------
+#         Return: Number of motor functions (int).
+#         """
+#         if not self.controller:
+#             print("Controller not initialized.")
+#             return 0
+        
+#         start_time = time.time()
+#         while time.time() - start_time < 5:  # Wait for 5 seconds to get data
+#             data = self.controller.get_data(['predictions'])
+#             if data:
+#                 print(f"Number of motor functions: {len(data)}")
+#                 return len(data)
+#             time.sleep(0.1)
+        
+#         print("No prediction data available.")
+#         return 0
+    
+#     def set_parameters(self, gain_mf1=None, gain_mf2=None, thr_angle_mf1=None, thr_angle_mf2=None, deadband=None):
+#         """
+#         Set the configuration for the prosthetic device. NOTE! Could add checks here as well to ensure the values are within a certain range, or if they are valid values.
+#         Parameters:
+#         ----------
+#             gains: List of gains for each motor function (list of floats).
+#             thr_angle_mf1: Threshold angle for motor function 1 (float).
+#             thr_angle_mf2: Threshold angle for motor function 2 (float).
+#             deadband: Deadband value (float).
+#         """
+#         if gain_mf1:
+#             self.gain_mf1 = gain_mf1
+#         if gain_mf2:
+#             self.gain_mf2 = gain_mf2
+#         if thr_angle_mf1:
+#             self.thr_angle_mf1 = thr_angle_mf1
+#         if thr_angle_mf2:
+#             self.thr_angle_mf2 = thr_angle_mf2
+#         if deadband:
+#             self.deadband = deadband
+    
+#     def write_to_json(self, file_path):
+#         """
+#         Write the configuration to a JSON file.
+#         Parameters:
+#         ----------
+#             folder: The folder to save the JSON file (string).
+#             filename: The name of the JSON file (string).
+#         """
+#         config = {
+#             'gain_mf1': self.gain_mf1,
+#             'gain_mf2': self.gain_mf2,
+#             'thr_angle_mf1': self.thr_angle_mf1,
+#             'thr_angle_mf2': self.thr_angle_mf2,
+#             'deadband': self.deadband
+#         }
+#         try: 
+#             with open(file_path, 'w') as f:
+#                 json.dump(config, f, indent=4) # Save the configuration to a file
+#                 print(f"Configuration saved to {file_path}")
+#         except Exception as e:
+#             print(f"Error saving configuration: {e}")

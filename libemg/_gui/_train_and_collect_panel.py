@@ -1,3 +1,8 @@
+
+
+##### Made by Rikke 11.10.2024 #####
+
+
 import shutil
 from pathlib import Path
 import dearpygui.dearpygui as dpg
@@ -16,36 +21,40 @@ from libemg.data_handler import OfflineDataHandler, RegexFilter
 from libemg.feature_extractor import FeatureExtractor
 from libemg.offline_metrics import OfflineMetrics
 from libemg.emg_predictor import EMGRegressor, OnlineEMGRegressor
-from libemg.training import TrainingPrompt
+from libemg.training import TrainingProtocol
 
-class DataCollectionPanel:
+class TrainAndCollectPanel:
     def __init__(self,
                  num_reps=3,
-                 rep_time=3,
-                 media_folder='media/',
+                 rise_time=2,
+                 steady_state_time=1,
+                 time_between_reps=1,
+                 axis_media='media/',
                  data_folder='data/',
-                 rest_time=2,
-                 auto_advance=True,
+                 rest_between_sets=2,
+                 auto_advance=False,
                  exclude_files=[],
                  gui = None,
                  video_player_width = 720,
                  video_player_height = 480):
         
         self.num_reps = num_reps
-        self.rep_time = rep_time
-        self.media_folder = media_folder
-        self.data_folder  = data_folder # Changed this 12.05 (Rikke), is called data_folder in GUI but data_folder in DataCollectionPanel
-        self.rest_time = rest_time
+        self.rise_time = rise_time
+        self.time_between_reps = time_between_reps
+        self.steady_state_time = steady_state_time
+        self.axis_media = axis_media
+        self.data_folder = data_folder
+        self.rest_between_sets = rest_between_sets
         self.auto_advance=auto_advance
         self.exclude_files = exclude_files
         self.gui = gui
         self.video_player_width = video_player_width
         self.video_player_height = video_player_height
 
-        self.widget_tags = {"configuration":['__dc_configuration_window','__dc_num_reps','__dc_rep_time','__dc_rest_time', '__dc_media_folder',\
-                                             '__dc_auto_advance','__dc_rise_time', '__dc_steady_state_time'], #NOTE! Added signal times 10.05 
+        self.widget_tags = {"configuration":['__dc_configuration_window','__dc_num_reps','__dc_rest_between_sets', '__dc_media_folder',\
+                                             '__dc_auto_advance', '__dc_rise_time', '__dc_steady_state_time', '__dc_time_between_reps'], #NOTE! Added signal times 10.05
                             "collection":   ['__dc_collection_window', '__dc_prompt_spacer', '__dc_prompt', '__dc_progress', '__dc_redo_button'],
-                            "visualization": ['__vls_visualize_window', '__dc_recent_data']}
+                            "visualization": ['__vls_visualize_window']}
         
 
     def cleanup_window(self, window_name):
@@ -84,19 +93,17 @@ class DataCollectionPanel:
                         dpg.add_input_text(default_value=self.rest_time,
                                         tag="__dc_rest_time", 
                                         width=100)
-                # SIGNAL ROW - if training prompt is a real-time plot and not a video from animation (in regression)
-                # with dpg.table_row():
-                #     with dpg.group(horizontal=True):
-                #         dpg.add_text("Rise Time")
-                #         dpg.add_input_text(default_value=1.0,
-                #                         tag="__dc_rise_time",
-                #                         width=100)
-                #     with dpg.group(horizontal=True):
-                #         dpg.add_text("Steady State Time")
-                #         dpg.add_input_text(default_value=1.0,
-                #                         tag="__dc_steady_state_time",
-                #                         width=100)
-                
+                # SIGNAL GENERATOR ROW - NOTE! Added signal times 10.05
+                with dpg.table_row():
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Rise Time:")
+                        dpg.add_input_text(default_value=1, tag="__dc_rise_time", width=100)
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Steady-State Time:")
+                        dpg.add_input_text(default_value=1, tag="__dc_steady_state_time", width=100)
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Rest Time:")
+                        dpg.add_input_text(default_value=1, tag="__dc_signal_rest_time", width=100)
                 # FOLDER ROW
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
@@ -106,8 +113,8 @@ class DataCollectionPanel:
                     with dpg.group(horizontal=True):
                         dpg.add_text("Output Folder:")
                         dpg.add_input_text(default_value=self.data_folder, 
-                                        tag="__dc_data_folder",
-                                        width=350)
+                                        tag="__dc_output_folder",
+                                        width=250)
                 # CHECKBOX ROW
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
@@ -122,7 +129,50 @@ class DataCollectionPanel:
         
         # dpg.set_primary_window("__dc_configuration_window", True)
 
-   
+    def start_training_callback(self):
+        if not (self.gui.online_data_handler and sum(list(self.gui.online_data_handler.get_data()[1].values()))):
+            raise ConnectionError('Attempted to start data collection, but data are not being received. Please ensure the OnlineDataHandler is receiving data.')
+
+        self.get_settings()
+        dpg.delete_item("__dc_configuration_window")
+        self.cleanup_window("configuration")
+        self.set_media_list() # Made by me - 11.05
+
+        self.spawn_collection_thread = threading.Thread(target=self.spawn_collection_window, args=(media_list,))
+        self.spawn_collection_thread.start()
+    
+    def set_media_list(self): # Made by me - 11.05
+        files = os.listdir(self.media_folder)
+        label_files = [file for file in files if file.endswith(('.txt', '.csv'))]
+        self.num_motions = len(label_files)
+        # make the collection_details.json file
+        collection_details = {}
+        collection_details["num_motions"] = self.num_motions
+        collection_details["num_reps"]    = self.num_reps
+        collection_details["classes"] =   [f.split('.')[0] for f in label_files]
+        collection_details["class_map"] = {index: f.split('.')[0] for index, f in enumerate(label_files)}
+        collection_details["time"]    = datetime.now().isoformat()
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
+        with open(Path(self.output_folder, "collection_details.json").absolute().as_posix(), 'w') as f:
+            json.dump(collection_details, f)
+
+        collection_conf = []
+        for rep_index in range(self.num_reps):
+            for class_index, label_file in enumerate(label_files):
+                label_str = Path(label_file).stem
+                label_path = Path(self.media_folder, label_file).absolute().as_posix()
+            
+            # Load the label signal or function (you design this part)
+            label_signal = self.load_label_signal(label_path)  # Could return a function or array
+
+            # Estimate duration from length or define a fixed one
+            duration = self.estimate_duration_from_label(label_path)
+
+            collection_conf.append([label_signal, label_str, class_index, rep_index, duration])
+
+        return collection_conf
+    
     def start_callback(self):
         if not (self.gui.online_data_handler and sum(list(self.gui.online_data_handler.get_data()[1].values()))):
             raise ConnectionError('Attempted to start data collection, but data are not being received. Please ensure the OnlineDataHandler is receiving data.')
@@ -134,15 +184,17 @@ class DataCollectionPanel:
 
         self.spawn_collection_thread = threading.Thread(target=self.spawn_collection_window, args=(media_list,))
         self.spawn_collection_thread.start()
+        # self.spawn_collection_window(media_list)
 
     def get_settings(self):
         self.num_reps      = int(dpg.get_value("__dc_num_reps"))
         self.rep_time      = float(dpg.get_value("__dc_rep_time"))
         self.rest_time     = float(dpg.get_value("__dc_rest_time"))
-        #self.rise_time     = float(dpg.get_value("__dc_rise_time"))
-        #self.steady_state_time = float(dpg.get_value("__dc_steady_state_time"))
+        self.rise_time     = float(dpg.get_value("__dc_rise_time"))             # Added by me 11.05
+        self.steady_state_time = float(dpg.get_value("__dc_steady_state_time")) # Added by me 11.05
+        self.signal_rest_time = float(dpg.get_value("__dc_signal_rest_time"))   # Added by me 11.05
         self.media_folder  = dpg.get_value("__dc_media_folder")
-        self.data_folder = dpg.get_value("__dc_data_folder")
+        self.output_folder = dpg.get_value("__dc_output_folder")
         self.auto_advance  = bool(dpg.get_value("__dc_auto_advance"))
 
     def gather_media(self):
@@ -160,9 +212,9 @@ class DataCollectionPanel:
         collection_details["classes"] =   [f.split('.')[0] for f in files]
         collection_details["class_map"] = {index: f.split('.')[0] for index, f in enumerate(files)}
         collection_details["time"]    = datetime.now().isoformat()
-        if not os.path.exists(self.data_folder):
-            os.makedirs(self.data_folder)
-        with open(Path(self.data_folder, "collection_details.json").absolute().as_posix(), 'w') as f:
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
+        with open(Path(self.output_folder, "collection_details.json").absolute().as_posix(), 'w') as f:
             json.dump(collection_details, f)
 
         for media_file in files:
@@ -195,8 +247,8 @@ class DataCollectionPanel:
     def spawn_collection_window(self, media_list):
         # open first frame of gif
         self.gui.online_data_handler.prepare_smm()
-        texture = media_list[0][0].get_dpg_formatted_texture(width=self.video_player_width,height=self.video_player_height)
-        set_texture("__dc_collection_visual", texture, width=self.video_player_width, height=self.video_player_height)
+        #texture = media_list[0][0].get_dpg_formatted_texture(width=self.video_player_width,height=self.video_player_height)
+        #set_texture("__dc_collection_visual", texture, width=self.video_player_width, height=self.video_player_height)
         
         collection_window_width  = self.video_player_width + 100
         collection_window_height = self.video_player_height + 300
@@ -240,18 +292,7 @@ class DataCollectionPanel:
         
         # dpg.set_primary_window("__dc_collection_window", True)
 
-        #self.run_sgt(media_list)
-        # self.tp = TrainingPrompt( # This is meant for using live plot as training prompt, not an premade animation. Not finished. 
-        #                     motor_functions=self.gui.motor_functions,
-        #                     axis_media=self.gui.axis_media if hasattr(self.gui, 'axis_media') else {},
-        #                     rise_duration=self.rise_time, 
-        #                     steady_state_duration=self.steady_state_time, 
-        #                     amplitude=1, 
-        #                     rest_between_reps=self.rest_time, 
-        #                     num_reps=self.num_reps, 
-        #                     sampling_rate=24
-        #                     )
-        self.run_sgt_regression(media_list)
+        self.run_sgt(media_list)
         # clean up the window
         
         dpg.delete_item("__dc_collection_window")
@@ -259,61 +300,56 @@ class DataCollectionPanel:
         # open config back up
         self.spawn_configuration_window()
 
-    def run_sgt_regression(self, media_list):
-        self.gui.online_data_handler.reset()
+    def run_sgt_real_time(self, axis_media):
+        '''
+        Make training data collection in real time, i.e. a plot depending on given inputs in GUI.
+        Parameters:
+            axis_media: Dictionary with keys as the direction and values as the media objects.'''
+        self.i = 0
         self.advance = True
-        self.redo_class = None  # Reset redo flag
-        # TODO: Hard coded "rest" - need to be changed
-        rest_media = [m for m in media_list if m[1] == "rest"][0] # Only need one rest media
-        sorted_classes = sorted(set(m[2] for m in media_list)) # Train each class with every reps before moving to next.
-        for current_class in sorted_classes:
-            self.last_class = current_class
-            while True:         
-                for rep_index in range(self.num_reps):
-                    # Get correct media tuple for this class and rep
-                    current_media = [m for m in media_list if m[2] == current_class and m[3] == rep_index][0]
-                    dpg.set_value('__dc_rep', value=f"Rep {rep_index + 1} of {self.num_reps}")
+        self.gui.online_data_handler.reset()
+        # Fetch GUI settings
+        rise_time = float(dpg.get_value("__dc_rise_time"))
+        hold_time = float(dpg.get_value("__dc_steady_state_time"))
+        signal_rest_time = float(dpg.get_value("__dc_signal_rest_time"))
 
-                    if self.rest_time and not(current_media[1] == "rest" and self.auto_advance): # TODO: Hard coded "rest" - need to be changed
-                        # Play rest media
-                        self.play_collection_visual(rest_media, active=False, next_motion=current_media[1])
-                        current_media[0].reset()
-                        self.gui.online_data_handler.reset()
-                    
-                    # Reset rep buffer and count
-                    self.rep_buffer = {mod: [] for mod in self.gui.online_data_handler.modalities}
-                    self.rep_count = {mod: 0 for mod in self.gui.online_data_handler.modalities}
+        while self.i < len(axis_media):
+            self.rep_buffer = {mod:[] for mod in self.gui.online_data_handler.modalities}
+            self.rep_count  = {mod:0 for mod in self.gui.online_data_handler.modalities}
+            # do the rest
+            if self.rest_time and self.i < len(axis_media):
+                self.play_collection_visual(media_list[self.i], active=False)
+                media_list[self.i][0].reset()
+            
+            self.gui.online_data_handler.reset()
+            
+            self.play_motion_plot()
+            output_path = Path(self.output_folder, "C_" + str(media_list[self.i][2]) + "_R_" + str(media_list[self.i][3]) + ".csv").absolute().as_posix()
 
-                    self.play_collection_visual(current_media, active=True)
+            self.play_collection_visual(media_list[self.i], active=True)
+            
+            output_path = Path(self.output_folder, "C_" + str(media_list[self.i][2]) + "_R_" + str(media_list[self.i][3]) + ".csv").absolute().as_posix()
+            self.save_data(output_path)
+            last_rep = media_list[self.i][3]
+            self.i = self.i+1
+            is_final_media = self.i == len(media_list)
+            if is_final_media:
+                # At the end of the list, so we must be finished a rep
+                rep_is_finished = True
+                current_rep = self.num_reps - 1
+            else:
+                # Check if we've finished a rep
+                current_rep = media_list[self.i][3]
+                rep_is_finished = last_rep != current_rep
 
-                    # Save data
-                    output_path = Path(self.data_folder, f"C_{current_class}_R_{rep_index}.csv").absolute().as_posix()
-                    self.save_data(output_path)
+            # pause / redo goes here!
+            if rep_is_finished  or (not self.auto_advance):
+                # Show redo / continue buttons
+                dpg.show_item(item="__dc_redo_button")
+                dpg.show_item(item="__dc_continue_button")
+                dpg.set_item_user_data("__dc_recent_data", (media_list[self.i-1][2], media_list[self.i-1][3], media_list[self.i-1][4]))
 
-                    if not self.auto_advance or rep_index == self.num_reps - 1: # Show redo / continue buttons if auto advance is off or if this is the last rep of the class
-                        self.advance = False
-                        dpg.show_item("__dc_redo_button")
-                        dpg.show_item("__dc_continue_button")
-                        dpg.show_item("__dc_recent_data")
-                        dpg.set_item_user_data("__dc_recent_data", (current_media[1], current_media[2], rep_index, current_media[4]))
-                        dpg.show_item("__dc_features")
-                        if rep_index == self.num_reps - 1:
-                            next_class = sorted_classes[current_class + 1] if current_class + 1 < len(sorted_classes) else self.num_motions
-                            next_motion = [media[1] for media in media_list if media[2] == next_class][0] if current_class + 1 < len(sorted_classes) else "End of training"
-                            dpg.set_value("__dc_rep", value="Up next: "+ next_motion)
-
-                    while not self.advance:
-                        time.sleep(0.1)
-                        dpg.configure_app(manual_callback_management=True)
-                        jobs = dpg.get_callback_queue()
-                        dpg.run_callbacks(jobs)
-                    dpg.configure_app(manual_callback_management=False)
                 
-                if self.redo_class == current_class:
-                    self.redo_class = None  # Reset and repeat
-                    continue
-                break
-
     def run_sgt(self, media_list):
         self.i = 0
         self.advance = True
@@ -326,10 +362,10 @@ class DataCollectionPanel:
                 self.play_collection_visual(media_list[self.i], active=False)
                 media_list[self.i][0].reset()
             self.gui.online_data_handler.reset()
-
+            
             self.play_collection_visual(media_list[self.i], active=True)
             
-            output_path = Path(self.data_folder, "C_" + str(media_list[self.i][2]) + "_R_" + str(media_list[self.i][3]) + ".csv").absolute().as_posix()
+            output_path = Path(self.output_folder, "C_" + str(media_list[self.i][2]) + "_R_" + str(media_list[self.i][3]) + ".csv").absolute().as_posix()
             self.save_data(output_path)
             last_rep = media_list[self.i][3]
             self.i = self.i+1
@@ -350,7 +386,7 @@ class DataCollectionPanel:
                 dpg.show_item(item="__dc_redo_button")
                 dpg.show_item(item="__dc_continue_button")
                 dpg.show_item(item="__dc_recent_data") # Added by me
-                dpg.set_item_user_data("__dc_recent_data", (media_list[self.i-1][1], media_list[self.i-1][2], media_list[self.i-1][3], media_list[self.i-1][4])) # Added by me . Give the button the edit 18.05: also give class label, class index, rep index, and rep time for the visualize function
+                dpg.set_item_user_data("__dc_recent_data", (media_list[self.i-1][2], media_list[self.i-1][3], media_list[self.i-1][4])) # Added by me . Give the button the class index, rep index, and rep time for the visualize function
                 dpg.show_item(item="__dc_features") # Added by me - meant for showing plot of data collected after one rep
                 
                 while not self.advance:
@@ -363,18 +399,10 @@ class DataCollectionPanel:
                     dpg.set_value('__dc_rep', value=f"Rep {media_list[self.i][3] + 1} of {self.num_reps}")
         
     def redo_collection_callback(self):
-        # Redo logic
-        if hasattr(self, 'i'):  # This means we're in run_sgt (loop through all classes in one repetition (self.i) before moving to next repetition)
-            if self.auto_advance:
-                self.i = self.i - self.num_motions
-            else:
-                self.i = self.i - 1
-        else:  # We're in run_sgt_regression (run through all repetitions of one class before moving to next class (self.last_class))
-            if hasattr(self, 'last_class') and self.last_class is not None:
-                # Set a flag to re-run this class
-                self.redo_class = self.last_class
-            else:
-                print("Warning: last_class not set. Cannot redo.")
+        if self.auto_advance:
+            self.i      = self.i - self.num_motions
+        else:
+            self.i      = self.i - 1 
         dpg.hide_item(item="__dc_redo_button")
         dpg.hide_item(item="__dc_continue_button")
         dpg.hide_item(item="__dc_recent_data") # Added by me 
@@ -390,43 +418,18 @@ class DataCollectionPanel:
 
     # Added by me
     def recent_data_callback(self): # Added by me - meant for showing plot of data collected after one rep
-        dataset_folder = self.data_folder
-        class_label, class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
-
-        if class_num is None:
-            raise ValueError("No class specified for recent data visualization.")
+        dataset_folder = self.output_folder
+        class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
+        if class_num is None or rep_num is None:
+            raise ValueError("No data to visualize")
+        regex_filters = [ 
+            RegexFilter(left_bound=f'/C_{class_num}_R_', right_bound='_emg.csv', values=[str(rep_num)], description='reps')
+        ]
 
         self.offline_dh = OfflineDataHandler()
-
-        # Case 1: run_sgt_regression with auto_advance → show all reps for this class
-        if not hasattr(self, 'i') and self.auto_advance: # and not self.num_reps == 1:
-            # All reps from this class
-            regex_filters = [
-                RegexFilter(
-                    left_bound=f'/C_{class_num}_R_', 
-                    right_bound='_emg.csv', 
-                    values=[str(r) for r in range(self.num_reps)],
-                    description='all reps'
-                )
-            ]
-            title = f"Recent Data - Class: {class_label}, All Reps"
-        
-        # Case 2: run_sgt OR manual step-through → show single rep
-        else:
-            if rep_num is None:
-                raise ValueError("No repetition number provided for recent data visualization.")
-            regex_filters = [
-                RegexFilter(
-                    left_bound=f'/C_{class_num}_R_', 
-                    right_bound='_emg.csv', 
-                    values=[str(rep_num)],
-                    description='single rep'
-                )
-            ]
-            title = f"Recent Data - Class: {class_num}, Rep: {rep_num+1}"
-
         self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
-        self._plot_thread = threading.Thread(target=self._plot_data_helper, args=(title, sampling_time,))
+
+        self._plot_thread = threading.Thread(target=self._plot_data_helper, args=(f"Recent Data - Class: {class_num}, Rep: {rep_num}", sampling_time, ))
         self._plot_thread.start()
 
     # Added by me 
@@ -434,103 +437,48 @@ class DataCollectionPanel:
         self.offline_dh.visualize(block=False, title=title, time=time)
 
     def visualize_features_callback(self):
-        # self.WINDOW_SIZE, self.WINDOW_INCREMENT = 150, 100 # TODO: Change these later
-        # dataset_folder = self.data_folder
-        # class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
-        # if class_num is None or rep_num is None:
-        #     raise ValueError("No data to visualize")
-        # regex_filters = [ 
-        #     RegexFilter(left_bound=f'/C_{class_num}_R_', right_bound='_emg.csv', values=[str(rep_num)], description='reps')
-        # ]
-        # #metadata_operations = {'labels': 'last_sample'}
-        # self.offline_dh = OfflineDataHandler()
-        # self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
-        # train_windows, train_metadata = self.offline_dh.parse_windows(self.WINDOW_SIZE, self.WINDOW_INCREMENT, metadata_operations=None)
-
-        # fe = FeatureExtractor()
-        # print("Extracting features")
-        # #feature_list = fe.get_feature_list() # Get all available features - TODO: Could be made a GUI option
-        # feature_list = fe.get_feature_groups()['HTD'] # Make this chosen from the GUI later
-        # feature_dict = {}
-        # for feature in (feature_list):
-        #     train_features = fe.extract_features([feature], train_windows, array=True)
-        #     feature_dict[feature] = train_features
-
-        # self.feature_plot_thread = threading.Thread(target=self._plot_features_helper, args=(fe, feature_dict, sampling_time, ))
-        # self.feature_plot_thread.start()
-        # self.feature_plot_thread.join()
-        self.WINDOW_SIZE, self.WINDOW_INCREMENT = 150, 100  # Can be updated later
-        dataset_folder = self.data_folder
-        class_label, class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
-
-        ## NOTE! The same result happens if we extract data from all repetions or only one rep.
-        if class_num is None:
+        self.WINDOW_SIZE, self.WINDOW_INCREMENT = 150, 100 # TODO: Change these later
+        dataset_folder = self.output_folder
+        class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
+        if class_num is None or rep_num is None:
             raise ValueError("No data to visualize")
-
-        if not hasattr(self, 'i') and self.auto_advance:
-            # All reps from this class
-            regex_filters = [
-                RegexFilter(
-                    left_bound=f'/C_{class_num}_R_', 
-                    right_bound='_emg.csv', 
-                    values=[str(r) for r in range(self.num_reps)],
-                    description='all reps'
-                )
-            ]
-        
-        # Case 2: run_sgt OR manual step-through (i.e. auto_advance = False) → show single rep
-        else:
-            if rep_num is None:
-                raise ValueError("No repetition number provided for recent data visualization.")
-            regex_filters = [
-                RegexFilter(
-                    left_bound=f'/C_{class_num}_R_', 
-                    right_bound='_emg.csv', 
-                    values=[str(rep_num)],
-                    description='single rep'
-                )
-            ]
-
+        regex_filters = [ 
+            RegexFilter(left_bound=f'/C_{class_num}_R_', right_bound='_emg.csv', values=[str(rep_num)], description='reps')
+        ]
+        #metadata_operations = {'labels': 'last_sample'}
         self.offline_dh = OfflineDataHandler()
         self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
-
-        train_windows, train_metadata = self.offline_dh.parse_windows(
-            self.WINDOW_SIZE,
-            self.WINDOW_INCREMENT,
-            metadata_operations=None
-        )
+        train_windows, train_metadata = self.offline_dh.parse_windows(self.WINDOW_SIZE, self.WINDOW_INCREMENT, metadata_operations=None)
 
         fe = FeatureExtractor()
         print("Extracting features")
-
-        feature_list = fe.get_feature_groups()['HTD']  # You can make this GUI selectable later
+        #feature_list = fe.get_feature_list() # Get all available features - TODO: Could be made a GUI option
+        feature_list = fe.get_feature_groups()['HTD'] # Make this chosen from the GUI later
         feature_dict = {}
-        for feature in feature_list:
+        for feature in (feature_list):
             train_features = fe.extract_features([feature], train_windows, array=True)
             feature_dict[feature] = train_features
+            #feature_dict = {"training_features": train_features,
+            #                "training_labels": train_metadata['labels']}
 
-        # Plot all features across selected repetitions
-        self.feature_plot_thread = threading.Thread(
-                                    target=self._plot_features_helper,
-                                    args=(fe, feature_dict, sampling_time, f"Features for class: {class_label}"),
-                                    daemon=True
-                                )
+        self.feature_plot_thread = threading.Thread(target=self._plot_features_helper, args=(fe, feature_dict, sampling_time, ))
         self.feature_plot_thread.start()
+        self.feature_plot_thread.join()
 
-    def _plot_features_helper(self, fe, fe_dict, sampling_time, title):
-        fe.visualize_with_time(fe_dict, sampling_time=sampling_time, block=False, title=title)
+    def _plot_features_helper(self, fe, fe_dict, sampling_time):
+        fe.visualize_with_time(fe_dict, sampling_time=sampling_time, block=False)
 
-
-    def play_collection_visual(self, media, active=True, next_motion=""):
+    def play_collection_visual(self, media, active=True):
         if active:
             timer_duration = media[-1]
-            dpg.set_value("__dc_prompt", value="Current motion: "+media[1])
+            dpg.set_value("__dc_prompt", value=media[1])
             dpg.set_item_width("__dc_prompt_spacer",width=self.video_player_width/2+30 - (7*len(media[1]))/2)
         else:
             timer_duration = self.rest_time
-            dpg.set_value("__dc_prompt", value="Up next: "+next_motion)
-            dpg.set_item_width("__dc_prompt_spacer",width=self.video_player_width/2+30 - (7*len("Up next: "+next_motion))/2)
-
+            dpg.set_value("__dc_prompt", value="Up next: "+media[1])
+            dpg.set_item_width("__dc_prompt_spacer",width=self.video_player_width/2+30 - (7*len("Up next: "+media[1]))/2)
+        
+        
         texture = media[0].get_dpg_formatted_texture(width=self.video_player_width,height=self.video_player_height, grayscale=not(active))
         set_texture("__dc_collection_visual", texture, self.video_player_width, self.video_player_height)
         # initialize motion and frame timers
@@ -572,4 +520,3 @@ class DataCollectionPanel:
     
     def _run_visualization_helper(self):
         self.gui.online_data_handler.visualize(block=False)
-

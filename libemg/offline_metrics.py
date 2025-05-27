@@ -492,5 +492,5 @@ class OfflineMetrics:
             A NxN confusion matrix.
         """
         disp = ConfusionMatrixDisplay(confusion_matrix = mat, display_labels = labels)
-        disp.plot()
+        disp.plot(cmap='Blues', colorbar=True)
         plt.show()

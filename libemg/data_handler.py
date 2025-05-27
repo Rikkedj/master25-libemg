@@ -16,6 +16,7 @@ from scipy.ndimage import zoom
 from scipy.signal import decimate
 from matplotlib import pyplot
 from matplotlib.animation import FuncAnimation
+import matplotlib.patches as patches
 from pathlib import Path
 from glob import glob
 from multiprocessing import Process
@@ -558,39 +559,244 @@ class OfflineDataHandler(DataHandler):
 
         return new_odh
     
-    # Made by me
-    def visualize(self, block=True, title="Offline Data Visualization", time=None): # have a time for how long the data is sampled - could be found in data collection panel, saved in media folder
-        """Visualizes the data stored in the OfflineDataHandler object. This method will plot the data in a grid format where each channel is plotted in a separate subplot."""
+    # Made by Rikke
+ 
+    def visualize_classes(self, class_names={}, recording_time=1, title = "Offline Data Visualization", save_path=None, save_plot=False, block=True):
         if block:
-            self._visualize(title=title)
+            self._visualize_classes(class_names=class_names, recording_time=recording_time, title=title, save_path=save_path, save_plot=save_plot)
         else: 
-            p = Process(target=self._visualize, args=(title, time,), daemon=True)
+            p = Process(target=self._visualize_classes, args=(class_names, recording_time, title, save_path, save_plot), daemon=True)
+            p.start()
+        
+    def _visualize_classes(self, class_names={}, recording_time=1, title = "Offline Data Visualization", save_path=None, save_plot=False):
+        ''' 
+        Visualized the data stored in the OfflineDataHandler object. 
+        Each plot will be grouped by unique classes across all repetitions, for each channel.
+        
+        Parameters
+        ----------
+        class_names: dict
+            A dictionary mapping class indices to class names. If not provided, default class names will be used.
+        recording_time: int
+            The total recording time in seconds for each repetition.
+        '''
+
+        if not hasattr(self, 'classes') or not hasattr(self, 'data'):
+            raise AttributeError("self.classes and self.data must be defined")
+
+        # Flatten all class labels across reps to find unique classes
+        all_class_labels = np.concatenate([cls.reshape(-1) for cls in self.classes])
+        unique_classes = np.unique(all_class_labels)
+
+        num_classes = len(unique_classes)
+        total_reps = len(self.data)
+
+        num_samples, num_channels = self.data[0].shape
+
+        if num_classes == 1 and num_channels > 1:
+            fig, axes = plt.subplots(1, num_channels, figsize=(4 * num_channels+0.5, 2.5), sharex=True)
+            axes = np.atleast_2d(axes).T  # Ensure axes is always 2D for consistent indexing
+        else:
+            fig, axes = plt.subplots(num_channels, num_classes, figsize=(4 * num_classes, 2.5 * num_channels), sharex=True)
+            axes = np.atleast_2d(axes)  # Shape: [ch, class_idx]
+
+        fig.suptitle(title, fontsize=16)
+
+        # Ensure axes is always 2D for consistent indexing
+        color_map = plt.get_cmap("Pastel2")
+        channel_map = cm.get_cmap("tab20", num_channels)  # Use Accent colormap for channel colors
+        channel_colors =  ['tab:blue', 'darkolivegreen', 'tab:green', 'tab:red', 'tab:purple', 'tab:orange' ] #[channel_map(i) for i in range(num_channels)]
+
+        # Step 1: Calculate global y-limits for each channel
+        all_values = []
+        for rep_data in self.data:
+            all_values.append(rep_data)  # Shape: (num_samples, num_channels)
+
+        all_values = np.concatenate(all_values, axis=0)  # Shape: (total_samples, num_channels)
+        global_ymin = np.min(all_values)
+        global_ymax = np.max(all_values)
+
+        # Step 2: Create subplots for each channel and class
+        for class_idx, class_val in enumerate(unique_classes):
+            class_label = class_names[class_val] if class_idx < len(class_names) else f"Class {class_val}"
+
+            for ch in range(num_channels):
+                ax = axes[ch][class_idx]
+                ax.set_ylabel(f"Ch {ch+1}", fontsize=8)
+                if ch == num_channels - 1:
+                    ax.set_xlabel("Time [s]", fontsize=8)
+                if ch == 0:
+                    ax.set_title(class_label, fontsize=8)
+
+                concatenated_signal = []
+                rep_lengths = []
+
+                # Collect all data segments for this class, concatenate in time order
+                for rep_idx in range(total_reps):
+                    sampling_rate = self._get_sampling_rate(self.data[rep_idx], time=recording_time)  # Assuming time=None means use the default sampling rate
+                    
+                    rep_class_labels = self.classes[rep_idx].reshape(-1)
+                    rep_data = self.data[rep_idx]
+
+                    # Indices belonging to the current class in this repetition
+                    class_indices = np.where(rep_class_labels == class_val)[0]
+                    if len(class_indices) == 0:
+                        continue
+
+                    data_segment = rep_data[class_indices, ch]
+                    concatenated_signal.append(data_segment)
+                    rep_lengths.append(len(data_segment))
+
+                if len(concatenated_signal) == 0:
+                    continue  # no data to plot for this class/channel
+
+                # Concatenate all repetitions' data for this class/channel
+                full_signal = np.concatenate(concatenated_signal)
+                total_length = len(full_signal)
+                time_axis = np.arange(total_length) / sampling_rate
+
+                # Plot the concatenated signal
+                ax.plot(time_axis, full_signal, alpha=0.9, color=channel_colors[ch], linewidth=1.0)
+                ax.set_ylim(global_ymin-0.0005, global_ymax+0.0005)  # Set y-limits to global min/max
+                # Draw background rectangles for each repetition
+                start_sample = 0
+                for i, length in enumerate(rep_lengths):
+                    rect_start = start_sample / sampling_rate
+                    rect_width = length / sampling_rate
+                    rect_color = color_map(i % color_map.N)
+                    ax.add_patch(patches.Rectangle(
+                        (rect_start, global_ymin),
+                        rect_width,
+                        global_ymax - global_ymin,
+                        color=rect_color,
+                        alpha=0.2,
+                        zorder=0
+                    ))
+                    start_sample += length
+
+                ax.grid(True)
+
+        plt.tight_layout(rect=[0, 0.06, 0.9, 0.94]) # left, bottom, right, top margins
+        if save_plot and save_path is not None:
+            plt.savefig(save_path, bbox_inches='tight')
+            print(f"Plot saved to {save_path}")
+        plt.show()         
+
+
+    def visualize(self, block=True, class_names = [], num_reps=1,title="Offline Data Visualization", time=None): # have a time for how long the data is sampled - could be found in data collection panel, saved in media folder
+        """Visualizes the data stored in the OfflineDataHandler object. This method will plot the data in a grid format where each channel is plotted in a separate subplot.
+
+        Parameters
+        ----------
+        class_names: list
+            A list of class names corresponding to the data being visualized.
+        num_reps: int
+            The number of repetitions (trials) to visualize.
+        title: str
+            The title of the visualization.
+        time: float
+            The duration of the visualization in seconds.
+        """
+        if block:
+            self._visualize(class_names=class_names, num_reps=num_reps, title=title, time=time)
+        else: 
+            p = Process(target=self._visualize, args=(class_names, num_reps, title, time), daemon=True)
             p.start()
 
-    def _visualize(self, title="Offline Data Visualization", time=None):
-        num_samples = self.data[0].shape[0] # data[0] is the emg data
-        num_channels = self.data[0].shape[1]
-        rep_data = self.data[0]
-        if time is None: time = num_samples / 2002 # default sampling rate of 2002 Hz
-        sampling_rate = self._get_sampling_rate(self.data[0], time)
-        #samples = np.arange(num_samples) 
-        time_axis = np.arange(num_samples) / sampling_rate
+    def _visualize(self, class_names=[], num_reps=1, title="Offline Data Visualization", time=None):
+        num_reps = len(self.data)
+        num_samples, num_channels = self.data[0].shape
+        if hasattr(self, 'classes'): 
+            unique_classes = set()
+            for cls in getattr(self, 'classes'):
+                if cls is not None:
+                    unique_classes.update(np.unique(cls))
 
-        fig, axes = plt.subplots(num_channels, 1, figsize=(10, 2 * num_channels), sharex=True)
-        fig.suptitle(title, fontsize=16) 
-        #plt.figure(figsize=(10, 5))
-        for i in range(num_channels):
-            axes[i].plot(time_axis, rep_data[:, i], label=f'Channel {i+1}')
-            axes[i].set_ylabel(f"Ch {i+1}")
-            axes[i].legend()
-            axes[i].grid(True)
+        fig, axes = plt.subplots(num_channels, num_reps, figsize=(4 * num_reps, 2 * num_channels), sharex=True)
+        fig.suptitle(title, fontsize=16)
 
-            #plt.plot(samples, rep_data[:,i], label=f'Channel {i+1}')
-        axes[-1].set_xlabel("Time [s]")
-        plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout for title
+        # Ensure axes is always 2D for consistent indexing
+        axes = np.atleast_2d(axes)
+        # if num_reps == 1:
+        #     axes = np.expand_dims(axes, axis=1)
+        # if num_channels == 1:
+        #     axes = np.expand_dims(axes, axis=0)
+
+        for r in range(num_reps):
+            rep_data = self.data[r]
+            num_samples = rep_data.shape[0]
+            current_time = time if time is not None else num_samples / 2002 # default sampling rate of 2002 Hz
+            sampling_rate = self._get_sampling_rate(rep_data, current_time)
+            time_axis = np.arange(num_samples) / sampling_rate
+
+            for c in range(num_channels):
+                axes[c][r].plot(time_axis, rep_data[:, c], label=f'Ch {c+1}')
+                axes[c][r].set_ylabel(f"Ch {c+1}")
+                #axes[c][r].legend()
+                axes[c][r].grid(True)
+                if c == num_channels - 1:
+                    axes[c][r].set_xlabel("Time [s]", fontsize=10)
+                if c == 0:
+                    axes[c][r].set_title(f"Rep {r+1}")
+
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.show()
+        # if not class_names:
+        #     class_names = ["Motion class"]
+        # num_classes = len(class_names)
+        # num_samples, num_channels = self.data[0].shape # Get number of samples and channels from first data entry
 
+        # # Compute how many reps per class
+        # reps_per_class = num_reps // num_classes
 
+        # fig, axes = plt.subplots(num_channels, num_classes, figsize=(4 * num_classes, 2.5 * num_channels), sharex=True)
+        # fig.suptitle(title, fontsize=16)
+
+        # if num_channels == 1:
+        #     axes = np.expand_dims(axes, axis=0)
+        # if num_classes == 1:
+        #     axes = np.expand_dims(axes, axis=1)
+
+        # # Plot each class per channel
+        # for class_idx, class_name in enumerate(class_names):
+        #     for ch in range(num_channels):
+        #         ax = axes[ch][class_idx]
+        #         color_map = plt.get_cmap("Pastel1")
+
+        #         for rep_idx in range(reps_per_class):
+        #             global_rep_idx = class_idx * reps_per_class + rep_idx
+        #             rep_data = self.data[global_rep_idx]
+        #             num_samples = rep_data.shape[0]
+
+        #             current_time = time if time is not None else num_samples / 2002
+        #             sampling_rate = self._get_sampling_rate(rep_data, current_time)
+        #             time_axis = np.arange(num_samples) / sampling_rate
+
+        #             ax.plot(time_axis, rep_data[:, ch], label=f'Rep {rep_idx+1}', alpha=0.9)
+
+        #             # Add rectangle
+        #             rect_start = time_axis[0]
+        #             rect_end = time_axis[-1]
+        #             rect_width = rect_end - rect_start
+        #             rect_color = color_map(rep_idx % 9)
+        #             ax.add_patch(patches.Rectangle(
+        #                 (rect_start, ax.get_ylim()[0]),
+        #                 rect_width,
+        #                 ax.get_ylim()[1] - ax.get_ylim()[0],
+        #                 color=rect_color,
+        #                 alpha=0.2,
+        #                 zorder=0
+        #             ))
+
+        #         ax.set_ylabel(f"Ch {ch+1}")
+        #         if ch == num_channels - 1:
+        #             ax.set_xlabel("Time [s]")
+        #         if ch == 0:
+        #             ax.set_title(f"{class_name}", fontsize=12)
+
+        # plt.tight_layout(rect=[0, 0.02, 1, 0.94])
+        # plt.show()
+       
 class OnlineDataHandler(DataHandler):
     """OnlineDataHandler class - responsible for collecting data streamed over shared memory.
 
@@ -764,7 +970,7 @@ class OnlineDataHandler(DataHandler):
             return plots,
     
         while True:
-            animation = FuncAnimation(fig, update, interval=100, repeat=False)
+            animation = FuncAnimation(fig, update, interval=100, repeat=False, cache_frame_data=False)
             pyplot.show()
             if self.visualize_signal.is_set():
                 print("ODH->visualize ended.")
