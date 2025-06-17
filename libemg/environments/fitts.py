@@ -7,7 +7,7 @@ import numpy as np
 
 from libemg.environments.controllers import Controller
 from libemg.environments._base import Environment
-
+from libemg.post_processing import FlutterRejectionFilter, PostPredictionAdjuster
 
 OUTSIDE_TARGET = pygame.USEREVENT + 1
 INSIDE_TARGET = pygame.USEREVENT + 2
@@ -80,7 +80,12 @@ class FittsConfig:
 
 
 class Fitts(Environment):
-    def __init__(self, controller: Controller, config: FittsConfig, prediction_map: dict | None = None):
+    def __init__(self, 
+                 controller: Controller, 
+                 config: FittsConfig, 
+                 prediction_map: dict | None = None, 
+                 post_prediction_adjuster: PostPredictionAdjuster | None = None, 
+                 flutter_rejection_filter: FlutterRejectionFilter | None = None):
         """Fitts style task. Targets are generated at random and the user is asked to acquire targets as quickly as possible.
 
         Parameters
@@ -114,6 +119,8 @@ class Fitts(Environment):
             4: 'W'
         }
         self.config = config
+        self.post_prediction_adjuster = post_prediction_adjuster
+        self.flutter_rejection_filter = flutter_rejection_filter
         super().__init__(controller, fps=self.config.fps, log_dictionary=log_dictionary, save_file=self.config.save_file)
 
         if self.config.mapping == 'cartesian':
@@ -158,6 +165,8 @@ class Fitts(Environment):
             self._info.append('pc')
         self.start_time = time.time()
         self.dwell_timer = None
+
+        self.previous_pred = None
 
     def _draw(self):
         self.screen.fill(self.config.background_color)
@@ -240,10 +249,24 @@ class Fitts(Environment):
                     raise ValueError(f"Expected prediction map to have keys 'N', 'E', 'S', 'W', and 'NM', but found key: {direction}.")
                 
                 pc = [pc, pc]
+            # Added by Rikke
+            if self.post_prediction_adjuster is not None:
+                predictions = self.post_prediction_adjuster.update_prediction(predictions)
+                print(f"[INFO] Updated gains and thresholds: {predictions}")
 
+
+            if self.flutter_rejection_filter is not None:
+                if self.previous_pred is None:
+                    self.previous_pred = np.zeros_like(predictions)
+                feedback_pred = predictions - self.previous_pred
+                predictions = predictions - self.flutter_rejection_filter.filter(feedback_pred)
+                self.previous_pred = predictions
+                print(f"[INFO] Filtered predictions after flutter rejection: {predictions}")
+            
             self.current_direction[0] += self.config.velocity * float(predictions[0]) * pc[0]
             self.current_direction[1] -= self.config.velocity * float(predictions[1]) * pc[1]    # -ve b/c pygame origin pixel is at top left of screen
-
+            
+        
             self._log(str(predictions), timestamp)
         
         if len(self.log_dictionary['time_stamp']) == 0:
@@ -366,7 +389,14 @@ class Fitts(Environment):
 
 
 class ISOFitts(Fitts):
-    def __init__(self, controller: Controller, config: FittsConfig, prediction_map: dict | None = None, num_targets: int = 8, target_distance_radius: int = 275):
+    def __init__(self, 
+                 controller: Controller, 
+                 config: FittsConfig, 
+                 prediction_map: dict | None = None, 
+                 num_targets: int = 8,
+                 target_distance_radius: int = 275, 
+                 post_prediction_adjuster: PostPredictionAdjuster | None = None, 
+                 flutter_rejection_filter: FlutterRejectionFilter | None = None):
         """ISO Fitts style task. Targets are generated in a circle and the user is asked to acquire targets as quickly as possible.
 
         Parameters
@@ -418,7 +448,7 @@ class ISOFitts(Fitts):
             ))
             angle += angle_increment
 
-        super().__init__(controller, config, prediction_map=prediction_map)
+        super().__init__(controller, config, prediction_map=prediction_map, post_prediction_adjuster=post_prediction_adjuster, flutter_rejection_filter=flutter_rejection_filter)
 
     def _draw_targets(self):
         for target in self.targets:

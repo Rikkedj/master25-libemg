@@ -482,7 +482,7 @@ class EMGRegressor(EMGPredictor):
         if convert_to_multioutput:
             model = MultiOutputRegressor(model)
         self.deadband_threshold = deadband_threshold
-        self.fi = None  # Added by Rikke 21.05 - to use filter on predictions (FlutterFilter)
+        #self.flutter_filter = flutter_filter  # Added by Rikke 21.05 - to use filter on predictions (FlutterFilter)
         super().__init__(model, model_parameters, random_seed=random_seed, fix_feature_errors=fix_feature_errors, silent=silent)
 
     
@@ -501,14 +501,11 @@ class EMGRegressor(EMGPredictor):
         test_data = self._format_data(test_data)
         predictions = self._predict(test_data)
 
-        # This was made by Rikke 21.05 - don't think it worked but forgot to remove TODO: double check
-        if self.fi is not None:
-            # Apply filter to predictions
-            predictions = self.fi.filter(predictions) # NOTE! this does not work with integrator since we are integrating the whole dataset. Maybe it works in real-time prediction
-
         # Set values within deadband to 0
         deadband_mask = np.abs(predictions) < self.deadband_threshold
         predictions[deadband_mask] = 0.
+
+
 
         return predictions
     
@@ -522,7 +519,7 @@ class EMGRegressor(EMGPredictor):
         """
         self.fi = filter
     
-    def visualize(self, test_labels, predictions, save_plot = False, save_path = None, mf_labels_dict = None, dof_titles = None):
+    def visualize(self, test_labels, predictions, save_path = None, mf_labels_dict = None, dof_titles = None, time_axis=False, sample_rate=2000):
         """Visualize the decision stream of the regressor on test data.
 
         You can call this visualize function to get a visual output of what the decision stream looks like.
@@ -531,9 +528,7 @@ class EMGRegressor(EMGPredictor):
         :type test_labels: N x M array, where N = # samples and M = # DOFs, containing the labels for the test data.
         :param predictions: np.ndarray
         :type predictions: N x M array, where N = # samples and M = # DOFs, containing the predictions for the test data.
-        NOTE: The last four is added by Rikke 21.05.2025
-        :param save_plot: bool, optional
-            If True, the plot will be saved to the specified path. Defaults to False.
+        NOTE: The last three is added by Rikke 21.05.2025
         :param save_path: str, optional
             The path where the plot will be saved. Required if save_plot is True.
         :param mf_labels_dict : list of dicts, optional
@@ -541,42 +536,50 @@ class EMGRegressor(EMGPredictor):
         :param dof_titles : list, optional
             A list like [motor function 1, motor function 2]
             Used to title each subplot. Must be of length M (number of DOFs).
+        :param time_axis: bool, optional
+            If True, the x-axis will be labeled with time indices instead of sample indices. Defaults to False.
         """
         assert len(predictions) > 0, 'Empty list passed in for predictions to visualize.'
 
         # Formatting
         plt.style.use('ggplot')
         fig, axs = plt.subplots(nrows=test_labels.shape[1], ncols=1, sharex=True, layout='constrained')
-        fig.suptitle(f'Decision Stream for {self.model.estimator}')
-        fig.supxlabel('Prediction Index')
+        model_name = self.model.estimator.__class__.__name__ if hasattr(self.model, 'estimator') else 'Unknown Model'
+        fig.suptitle(model_name, x=0.6) #(f'Decision Stream for {model_name}')
+        fig.supxlabel('Time (s)' if time_axis else 'Prediction Index', x=0.6)
         fig.supylabel('Model Output')
 
         marker_size = 5
         pred_color = 'black'
         label_color = 'blue'
-        x = np.arange(test_labels.shape[0])
-        handles = [mpatches.Patch(color=label_color, label='Labels'), mlines.Line2D([], [], color=pred_color, marker='o', markersize=marker_size, linestyle='None', label='Predictions')]
+        
+        
+        if time_axis:
+            x = np.arange(test_labels.shape[0])*100/sample_rate + (400/sample_rate)  # Adjust x-axis for time in seconds
+        else:
+            x = np.arange(test_labels.shape[0])
+
+        handles = [mpatches.Patch(color=label_color, label='True Values'), mlines.Line2D([], [], color=pred_color, marker='o', markersize=marker_size, linestyle='None', label='Estimated Values')]
         for dof_idx, ax in enumerate(axs):
             if dof_titles and dof_idx < len(dof_titles):
-                ax.set_title(f"{dof_titles[dof_idx]}")
+                ax.set_title(f"{dof_titles[dof_idx]}", fontsize=10)
             else: 
                 ax.set_title(f"DOF: {dof_idx}")
-            ax.set_ylim((-1.05, 1.05))
+            ax.set_ylim((-1.1, 1.1))
             ax.xaxis.grid(False)
             ax.fill_between(x, test_labels[:, dof_idx], alpha=0.5, color=label_color)
             ax.scatter(x, predictions[:, dof_idx], color=pred_color, s=marker_size)
             # Annotate y-axis labels if mf_labels_dict is provided
             if mf_labels_dict and dof_idx < len(mf_labels_dict):
                 for val, label in mf_labels_dict[dof_idx].items():
-                    ax.axhline(y=val, color='gray', linestyle='--', linewidth=0.5)
-                    ax.text(-0.05, val, label, transform=ax.get_yaxis_transform(),
+                    #ax.axhline(y=val, color='gray', linestyle='--', linewidth=0.5)
+                    ax.text(-0.08, val, label, transform=ax.get_yaxis_transform(),
                             ha='right', va='center', fontsize=8, color='black')
 
         fig.legend(handles=handles, loc='upper right')
-        
-        if save_plot:
-            if save_path is None:
-                raise ValueError("Please provide a valid path to save the plot.")
+        plt.tight_layout(rect=(0, 0, 1, 1))  # Adjust layout to make room for the legend
+   
+        if save_path is not None:
             save_path = Path(save_path)
             # Ensure save_path exists, creating it if needed
             save_path.parent.mkdir(parents=True, exist_ok=True)

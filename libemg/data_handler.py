@@ -576,7 +576,7 @@ class OfflineDataHandler(DataHandler):
         Parameters
         ----------
         class_names: dict
-            A dictionary mapping class indices to class names. If not provided, default class names will be used.
+            A dictionary mapping class indices (int) to class names (str). If not provided, default class names will be used.
         recording_time: int
             The total recording time in seconds for each repetition.
         '''
@@ -588,24 +588,32 @@ class OfflineDataHandler(DataHandler):
         all_class_labels = np.concatenate([cls.reshape(-1) for cls in self.classes])
         unique_classes = np.unique(all_class_labels)
 
+        true_motion = self.labels if hasattr(self, 'labels') else None
+
+
         num_classes = len(unique_classes)
         total_reps = len(self.data)
+        max_reps_per_class = max([
+                                    sum(rep_cls[0, 0] == class_val for rep_cls in self.classes)
+                                    for class_val in unique_classes
+                                ])
+
 
         num_samples, num_channels = self.data[0].shape
 
-        if num_classes == 1 and num_channels > 1:
-            fig, axes = plt.subplots(1, num_channels, figsize=(4 * num_channels+0.5, 2.5), sharex=True)
-            axes = np.atleast_2d(axes).T  # Ensure axes is always 2D for consistent indexing
-        else:
-            fig, axes = plt.subplots(num_channels, num_classes, figsize=(4 * num_classes, 2.5 * num_channels), sharex=True)
-            axes = np.atleast_2d(axes)  # Shape: [ch, class_idx]
+        rows = num_channels + (1 if true_motion is not None else 0)  # +1 for true motion if available
+        cols = num_classes if num_classes > 1 else 1  # If only one class, plot in a single row
+        fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 2.5 * rows), sharex=True)
 
-        fig.suptitle(title, fontsize=16)
+        axes = np.atleast_2d(axes)  # Ensure axes is always 2D for consistent indexing
+        fig.suptitle(title, fontsize=16, fontweight='bold')
 
         # Ensure axes is always 2D for consistent indexing
         color_map = plt.get_cmap("Pastel2")
-        channel_map = cm.get_cmap("tab20", num_channels)  # Use Accent colormap for channel colors
+        rep_colors = [color_map(i%color_map.N) for i in range(max_reps_per_class)]
+        #channel_map = cm.get_cmap("tab20", num_channels)  # Use Accent colormap for channel colors NOTE: This is hardcoded to 6 channels, but can be changed to any number of channels
         channel_colors =  ['tab:blue', 'darkolivegreen', 'tab:green', 'tab:red', 'tab:purple', 'tab:orange' ] #[channel_map(i) for i in range(num_channels)]
+        legend_patches = [patches.Patch(facecolor=rep_colors[i], edgecolor='black', label=f"Rep {i+1}", alpha=0.2) for i in range(max_reps_per_class)]
 
         # Step 1: Calculate global y-limits for each channel
         all_values = []
@@ -616,25 +624,60 @@ class OfflineDataHandler(DataHandler):
         global_ymin = np.min(all_values)
         global_ymax = np.max(all_values)
 
+        max_segment_length = 0
+        # Plot true motion if available at first subplot
+        if true_motion is not None:
+            rep_idx = 0
+            for class_idx, class_val in enumerate(unique_classes):
+                ax = axes[0][class_idx]
+                time_line = 0
+                class_sig = []
+                for i in range(max_reps_per_class):
+                    sig = true_motion[rep_idx]
+                    if sig is None or len(sig) == 0:
+                        continue
+                    if class_names[class_val] == "rest":
+                        sig = sig[:max_segment_length]  # Limit to max segment length for rest class
+                    
+                    max_segment_length = max(max_segment_length, len(sig))
+                    class_sig.append(sig)
+                    time_line += len(sig)
+                    rep_idx += 1
+   
+                class_sig = np.vstack(class_sig)
+                mf1 = class_sig[:,0]
+                mf2 = class_sig[:,1] if class_sig.shape[1] > 1 else np.zeros_like(mf1)
+
+                time_axis = np.arange(time_line) / 2000 # Assuming a default sampling rate of 2000 Hz
+                #ax.plot(time_axis, true_motion[rep_idx].reshape(-1), color='black', alpha=0.9, linewidth=1.0, label="True Motion")
+                ax.fill_between(time_axis, 0, mf1, color='blue', alpha=0.2, label="Repetition Background")
+                if mf2 is not None and len(mf2) > 0:
+                    ax.fill_between(time_axis, 0, mf2, color='blue', alpha=0.2, label="Repetition Background")
+        
+        
         # Step 2: Create subplots for each channel and class
         for class_idx, class_val in enumerate(unique_classes):
-            class_label = class_names[class_val] if class_idx < len(class_names) else f"Class {class_val}"
+            if not class_val in class_names: # TODO: Should rather only make suplots for active classes, i.e. the length of class_names
+                class_names[class_val] = f"Class {class_val}"
+            class_label = class_names[class_val] if class_idx < len(class_names) else f"Class str{class_val}"
+            ax = axes[0][class_idx]
+            ax.set_title(class_label, fontsize=12, fontweight='bold')
+            if class_idx == 0: 
+                ax.set_ylabel("True Motion", fontsize=12, fontweight='bold')
 
             for ch in range(num_channels):
-                ax = axes[ch][class_idx]
-                ax.set_ylabel(f"Ch {ch+1}", fontsize=8)
+                ax = axes[ch+1][class_idx]
+                if class_idx == 0: 
+                    ax.set_ylabel(f"Ch {ch+1}", fontsize=12, fontweight='bold')
                 if ch == num_channels - 1:
                     ax.set_xlabel("Time [s]", fontsize=8)
-                if ch == 0:
-                    ax.set_title(class_label, fontsize=8)
+                #if ch == 0:
+                    #ax.set_title(class_label, fontsize=8)
 
                 concatenated_signal = []
                 rep_lengths = []
-
                 # Collect all data segments for this class, concatenate in time order
                 for rep_idx in range(total_reps):
-                    sampling_rate = self._get_sampling_rate(self.data[rep_idx], time=recording_time)  # Assuming time=None means use the default sampling rate
-                    
                     rep_class_labels = self.classes[rep_idx].reshape(-1)
                     rep_data = self.data[rep_idx]
 
@@ -642,20 +685,28 @@ class OfflineDataHandler(DataHandler):
                     class_indices = np.where(rep_class_labels == class_val)[0]
                     if len(class_indices) == 0:
                         continue
+                    
+                    #sampling_rate = self._get_sampling_rate(self.data[rep_idx], time=recording_time)  # Assuming time=None means use the default sampling rate
 
                     data_segment = rep_data[class_indices, ch]
+                    if class_label == "rest" and len(data_segment) > max_segment_length:
+                        data_segment = data_segment[:max_segment_length]  # Limit to max segment length for rest class   
+                        
                     concatenated_signal.append(data_segment)
                     rep_lengths.append(len(data_segment))
-
+                    max_segment_length = max(max_segment_length, len(data_segment))
+                    
                 if len(concatenated_signal) == 0:
                     continue  # no data to plot for this class/channel
 
                 # Concatenate all repetitions' data for this class/channel
+                sampling_rate = max_segment_length / recording_time if recording_time else 2000
                 full_signal = np.concatenate(concatenated_signal)
                 total_length = len(full_signal)
                 time_axis = np.arange(total_length) / sampling_rate
-
                 # Plot the concatenated signal
+                #if class_idx == 0:
+                #    axes[0][class_idx].plot(time_axis, true, alpha=0.9, color=channel_colors[ch], linewidth=1.0)
                 ax.plot(time_axis, full_signal, alpha=0.9, color=channel_colors[ch], linewidth=1.0)
                 ax.set_ylim(global_ymin-0.0005, global_ymax+0.0005)  # Set y-limits to global min/max
                 # Draw background rectangles for each repetition
@@ -675,13 +726,63 @@ class OfflineDataHandler(DataHandler):
                     start_sample += length
 
                 ax.grid(True)
-
+        
+        fig.legend(
+            handles=legend_patches,
+            loc='upper center',
+            bbox_to_anchor=(0.5, 0.95),  # center, slightly below the title
+            ncol=min(max_reps_per_class, 6),
+            fontsize=8,
+            frameon=False
+        )
         plt.tight_layout(rect=[0, 0.06, 0.9, 0.94]) # left, bottom, right, top margins
         if save_plot and save_path is not None:
-            plt.savefig(save_path, bbox_inches='tight')
+            plt.savefig(save_path, bbox_inches='tight', dpi=300, format='pdf')
             print(f"Plot saved to {save_path}")
         plt.show()         
 
+    def visualize_for_training(self, title="Offline Data Visualization", recording_duration=None, block=True):
+        if block:
+            self._visualize_for_training(title=title, recording_duration=recording_duration)
+        else:
+            p = Process(target=self._visualize_for_training, args=(title, recording_duration), daemon=True)
+            p.start()
+
+    def _visualize_for_training(self, title="Offline Data Visualization", recording_duration=None):
+        num_reps = len(self.data)
+        num_samples, num_channels = self.data[0].shape
+
+        # Compute global y-limits per channel
+        all_data = np.concatenate(self.data, axis=0)  # shape: (num_reps * num_samples, num_channels)
+        global_min = np.min(all_data)
+        global_max = np.max(all_data)
+        y_lim = (global_min*1.05, global_max*1.05)
+
+        fig, axes = plt.subplots(num_reps, num_channels, figsize=(4 * num_channels, 2.5 * num_reps), sharex=True)
+        fig.suptitle(title, fontsize=16)
+        axes = np.atleast_2d(axes)
+
+        for r in range(num_reps):
+            rep_data = self.data[r]
+            num_samples = rep_data.shape[0]
+            current_duration = recording_duration if recording_duration is not None else num_samples / 2000
+            sampling_rate = self._get_sampling_rate(rep_data, current_duration)
+            time_axis = np.arange(num_samples) / sampling_rate
+
+            for c in range(num_channels):
+                ax = axes[r, c]
+                ax.plot(time_axis, rep_data[:, c], color='tab:blue')
+                ax.set_ylim(y_lim)
+                if r == num_reps - 1:
+                    ax.set_xlabel("Time [s]")
+                if c == 0:
+                    ax.set_ylabel(f"Rep {r+1}")
+                if r == 0:
+                    ax.set_title(f"Ch {c+1}")
+                ax.grid(True)
+
+        plt.tight_layout()
+        plt.show()
 
     def visualize(self, block=True, class_names = [], num_reps=1,title="Offline Data Visualization", time=None): # have a time for how long the data is sampled - could be found in data collection panel, saved in media folder
         """Visualizes the data stored in the OfflineDataHandler object. This method will plot the data in a grid format where each channel is plotted in a separate subplot.

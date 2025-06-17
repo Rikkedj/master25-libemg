@@ -14,9 +14,10 @@ import threading
 import matplotlib.pyplot as plt
 from libemg.data_handler import OfflineDataHandler, RegexFilter
 from libemg.feature_extractor import FeatureExtractor
+from libemg.filtering import Filter
 from libemg.offline_metrics import OfflineMetrics
 from libemg.emg_predictor import EMGRegressor, OnlineEMGRegressor
-from libemg.training import TrainingPrompt
+
 
 class DataCollectionPanel:
     def __init__(self,
@@ -231,7 +232,7 @@ class DataCollectionPanel:
                 dpg.add_button(tag="__dc_recent_data", label="Show Recent Data", callback=self.recent_data_callback)
             with dpg.group(horizontal=True):
                 dpg.add_spacer(tag="__dc_features_spacer", height=20, width=self.video_player_width/2+30 - (7*len("Visualize Features"))/2)
-                dpg.add_button(tag="__dc_features", label="Visualize Features", callback=self.visualize_features_callback)
+                dpg.add_button(tag="__dc_features", label="Visualize Features", callback=self.open_feature_selection_popup)
             dpg.hide_item(item="__dc_redo_button")
             dpg.hide_item(item="__dc_continue_button")
             dpg.hide_item(item="__dc_recent_data") # Added by me
@@ -241,19 +242,9 @@ class DataCollectionPanel:
         # dpg.set_primary_window("__dc_collection_window", True)
 
         #self.run_sgt(media_list)
-        # self.tp = TrainingPrompt( # This is meant for using live plot as training prompt, not an premade animation. Not finished. 
-        #                     motor_functions=self.gui.motor_functions,
-        #                     axis_media=self.gui.axis_media if hasattr(self.gui, 'axis_media') else {},
-        #                     rise_duration=self.rise_time, 
-        #                     steady_state_duration=self.steady_state_time, 
-        #                     amplitude=1, 
-        #                     rest_between_reps=self.rest_time, 
-        #                     num_reps=self.num_reps, 
-        #                     sampling_rate=24
-        #                     )
-        self.run_sgt_regression(media_list)
+        self.run_sgt_regression(media_list) # By Rikke. Updated for optimizing the SGT when using regression.
+    
         # clean up the window
-        
         dpg.delete_item("__dc_collection_window")
         self.cleanup_window("collection")
         # open config back up
@@ -264,7 +255,8 @@ class DataCollectionPanel:
         self.advance = True
         self.redo_class = None  # Reset redo flag
         # TODO: Hard coded "rest" - need to be changed
-        rest_media = [m for m in media_list if m[1] == "rest"][0] # Only need one rest media
+        rest_media = [m for m in media_list if m[1] == "rest"]
+        if rest_media: rest_media = rest_media[0] # Only need one rest media
         sorted_classes = sorted(set(m[2] for m in media_list)) # Train each class with every reps before moving to next.
         for current_class in sorted_classes:
             self.last_class = current_class
@@ -391,13 +383,12 @@ class DataCollectionPanel:
     # Added by me
     def recent_data_callback(self): # Added by me - meant for showing plot of data collected after one rep
         dataset_folder = self.data_folder
-        class_label, class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
-
+        class_label, class_num, rep_num, sampling_duration = dpg.get_item_user_data("__dc_recent_data")
         if class_num is None:
             raise ValueError("No class specified for recent data visualization.")
 
         self.offline_dh = OfflineDataHandler()
-
+        class_name_to_num = {class_label: class_num}
         # Case 1: run_sgt_regression with auto_advance → show all reps for this class
         if not hasattr(self, 'i') and self.auto_advance: # and not self.num_reps == 1:
             # All reps from this class
@@ -406,7 +397,7 @@ class DataCollectionPanel:
                     left_bound=f'/C_{class_num}_R_', 
                     right_bound='_emg.csv', 
                     values=[str(r) for r in range(self.num_reps)],
-                    description='all reps'
+                    description='reps'
                 )
             ]
             title = f"Recent Data - Class: {class_label}, All Reps"
@@ -426,48 +417,61 @@ class DataCollectionPanel:
             title = f"Recent Data - Class: {class_num}, Rep: {rep_num+1}"
 
         self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
-        self._plot_thread = threading.Thread(target=self._plot_data_helper, args=(title, sampling_time,))
+        fi = Filter(2000)
+        fi.install_filters({ "name": "highpass", "cutoff": 20, "order":2})
+        fi.filter(self.offline_dh) # Filter to remove DC offset
+        self._plot_thread = threading.Thread(target=self._plot_data_helper, args=(title, sampling_duration))
         self._plot_thread.start()
 
-    # Added by me 
-    def _plot_data_helper(self, title, time):
-        self.offline_dh.visualize(block=False, title=title, time=time)
+    def _plot_data_helper(self, title, duration):
+        self.offline_dh.visualize_for_training(block=False, title=title, recording_duration=duration)
 
-    def visualize_features_callback(self):
-        # self.WINDOW_SIZE, self.WINDOW_INCREMENT = 150, 100 # TODO: Change these later
-        # dataset_folder = self.data_folder
-        # class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
-        # if class_num is None or rep_num is None:
-        #     raise ValueError("No data to visualize")
-        # regex_filters = [ 
-        #     RegexFilter(left_bound=f'/C_{class_num}_R_', right_bound='_emg.csv', values=[str(rep_num)], description='reps')
-        # ]
-        # #metadata_operations = {'labels': 'last_sample'}
-        # self.offline_dh = OfflineDataHandler()
-        # self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
-        # train_windows, train_metadata = self.offline_dh.parse_windows(self.WINDOW_SIZE, self.WINDOW_INCREMENT, metadata_operations=None)
+    def open_feature_selection_popup(self):
+        all_features = FeatureExtractor().get_feature_list()
+        with dpg.window(label="Select Features", tag="__dc_feature_selection_popup", popup=True, modal=True, no_title_bar=False, width=400, height=500) as popup_id:
+            # Store checkbox values
+            self.selected_features = {}
+            with dpg.child_window(height=200, width=380, autosize_x=False, autosize_y=False):
+                for feature in all_features:
+                    self.selected_features[feature] = dpg.add_checkbox(label=feature, default_value=False, tag=f"feature_{feature}")
+            
+            # Input fields for window size and increment
+            dpg.add_separator()
+            dpg.add_text("Data Segmentation Settings:")
+            self.window_size_input = dpg.add_input_int(label="Window Size", default_value=200, width=150)
+            self.window_increment_input = dpg.add_input_int(label="Window Increment", default_value=100, width=150)
 
-        # fe = FeatureExtractor()
-        # print("Extracting features")
-        # #feature_list = fe.get_feature_list() # Get all available features - TODO: Could be made a GUI option
-        # feature_list = fe.get_feature_groups()['HTD'] # Make this chosen from the GUI later
-        # feature_dict = {}
-        # for feature in (feature_list):
-        #     train_features = fe.extract_features([feature], train_windows, array=True)
-        #     feature_dict[feature] = train_features
+            dpg.add_spacer(height=10)
+            # OK and Cancel buttons
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="OK", callback=self._on_features_ok)
+                dpg.add_button(label="Cancel", callback=lambda: dpg.delete_item("__dc_feature_selection_popup"))
 
-        # self.feature_plot_thread = threading.Thread(target=self._plot_features_helper, args=(fe, feature_dict, sampling_time, ))
-        # self.feature_plot_thread.start()
-        # self.feature_plot_thread.join()
-        self.WINDOW_SIZE, self.WINDOW_INCREMENT = 150, 100  # Can be updated later
+    def _on_features_ok(self):
+        # Get selected features
+        chosen_features = [
+            feature for feature, checkbox in self.selected_features.items()
+            if dpg.get_value(checkbox)
+        ]
+
+        # Get window size and increment
+        window_size = dpg.get_value(self.window_size_input)
+        window_increment = dpg.get_value(self.window_increment_input)
+        dpg.delete_item("__dc_feature_selection_popup")  # Close the popup
+        # Call visualize with user-selected parameters
+        self.visualize_features_callback(chosen_features, window_size, window_increment)
+
+    def visualize_features_callback(self, chosen_features, window_size, window_increment):
+        self.WINDOW_SIZE, self.WINDOW_INCREMENT = window_size, window_increment
         dataset_folder = self.data_folder
         class_label, class_num, rep_num, sampling_time = dpg.get_item_user_data("__dc_recent_data")
 
         ## NOTE! The same result happens if we extract data from all repetions or only one rep.
         if class_num is None:
             raise ValueError("No data to visualize")
+        class_name_to_num = {class_label: class_num}
 
-        if not hasattr(self, 'i') and self.auto_advance:
+        if not hasattr(self, 'i') and self.auto_advance: # To ensure we are in run_sgt_regression and not run_sgt -> these works differently
             # All reps from this class
             regex_filters = [
                 RegexFilter(
@@ -477,6 +481,7 @@ class DataCollectionPanel:
                     description='all reps'
                 )
             ]
+            num_reps = self.num_reps
         
         # Case 2: run_sgt OR manual step-through (i.e. auto_advance = False) → show single rep
         else:
@@ -490,6 +495,7 @@ class DataCollectionPanel:
                     description='single rep'
                 )
             ]
+            num_reps = 1
 
         self.offline_dh = OfflineDataHandler()
         self.offline_dh.get_data(folder_location=dataset_folder, regex_filters=regex_filters, delimiter=",")
@@ -503,22 +509,28 @@ class DataCollectionPanel:
         fe = FeatureExtractor()
         print("Extracting features")
 
-        feature_list = fe.get_feature_groups()['HTD']  # You can make this GUI selectable later
-        feature_dict = {}
-        for feature in feature_list:
-            train_features = fe.extract_features([feature], train_windows, array=True)
-            feature_dict[feature] = train_features
+        if chosen_features: 
+            feature_list = chosen_features  
+        else:
+            print("No features selected, using default HTD features")
+            feature_list = fe.get_feature_groups()["HTD"]
+            
+        feature_dict = fe.extract_features(feature_list=feature_list, windows=train_windows, array=False) 
+        # feature_dict = {}
+        # for feature in feature_list:
+        #     train_features = fe.extract_features([feature], train_windows, array=True)
+        #     feature_dict[feature] = train_features
 
         # Plot all features across selected repetitions
         self.feature_plot_thread = threading.Thread(
                                     target=self._plot_features_helper,
-                                    args=(fe, feature_dict, sampling_time, f"Features for class: {class_label}"),
+                                    args=(fe, feature_dict, sampling_time, class_name_to_num, num_reps, f"Features for class: {class_label}"),
                                     daemon=True
                                 )
         self.feature_plot_thread.start()
 
-    def _plot_features_helper(self, fe, fe_dict, sampling_time, title):
-        fe.visualize_with_time(fe_dict, sampling_time=sampling_time, block=False, title=title)
+    def _plot_features_helper(self, fe, fe_dict, sampling_time, class_name_dict, num_reps=1, title="Features"):
+        fe.visualize_for_training(feature_dict=fe_dict, sampling_time=sampling_time, window_size=self.WINDOW_SIZE, window_increment=self.WINDOW_INCREMENT, num_reps=num_reps, class_names=class_name_dict, block=False, title=title)
 
 
     def play_collection_visual(self, media, active=True, next_motion=""):

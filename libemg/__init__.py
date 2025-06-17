@@ -11,5 +11,3 @@ from libemg import animator
 from libemg import gui
 from libemg import shared_memory_manager
 from libemg import environments
-from libemg import prosthesis   # added 08.05
-from libemg import training     # added 11.05

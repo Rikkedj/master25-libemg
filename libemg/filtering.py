@@ -4,6 +4,8 @@ import math
 import matplotlib.pyplot as plt
 from libemg.data_handler import OfflineDataHandler, OnlineDataHandler
 
+ 
+
 class Filter:
     """ A class that will perform filtering on: (1) OfflineDataHandler, (2) OnlineDataHandler, 
     and (3) data in numpy.ndarrays.
@@ -213,7 +215,7 @@ class Filter:
             ax[fl,1].grid(True)
         plt.show()
     
-    def visualize_effect(self, data):
+    def visualize_effect(self, data, save_path=None):
         '''Visualizes the time and frequency domain before and after features are applied.
 
         Parameters
@@ -224,7 +226,7 @@ class Filter:
         assert len(self.filters) > 0
         assert type(data) == np.ndarray
         num_channels = data.shape[1]
-        fix, ax = plt.subplots(num_channels,4,figsize=(5*num_channels,15), squeeze=False)
+        fig, ax = plt.subplots(num_channels, 4, figsize=(15, 5*num_channels), squeeze=False)
 
         time_domain   = np.arange(data.shape[0])/self.sampling_frequency
         filtered_data = self.filter(data)
@@ -233,37 +235,78 @@ class Filter:
         frequency_domain_post, _             = self.get_frequency_domain(filtered_data)
 
         for c in range(num_channels):
-            # time series -- pre filter
-            ax[c,0].grid(True)
-            ax[c,0].plot(time_domain, data[:,c], label="original")
-            # styling
-            ax[c,0].set_ylabel("Signal Value")
-            ax[c,0].set_xlabel("Time (s)")
-            ax[c,0].set_title(f"CH{c}, pre filter time series")
-            
-            # time series -- pre filter
+            # --- Time domain y-limits for this channel ---
+            time_vals = np.concatenate((data[:, c], data[:, c] - filtered_data[:, c]))
+            time_min, time_max = time_vals.min(), time_vals.max()
+
+            # --- Frequency domain y-limits for this channel ---
+            freq_vals = np.concatenate((frequency_domain_pre[:, c], 
+                                        frequency_domain_pre[:, c] - frequency_domain_post[:, c]))
+            freq_min, freq_max = freq_vals.min(), freq_vals.max()
+
+            # time series -- difference between pre and post filter
             ax[c,1].grid(True)
-            ax[c,1].plot(time_domain, filtered_data[:,c], label="filtered")
+            ax[c,1].plot(time_domain, data[:,c]-filtered_data[:,c], label="original", linewidth=1, color='tab:blue')
             # styling
             ax[c,1].set_ylabel("Signal Value")
             ax[c,1].set_xlabel("Time (s)")
-            ax[c,1].set_title(f"CH{c}, post filter time series")
+            ax[c,1].set_title(f"Filtering Effect", y=1.05)
+            ax[c,1].set_ylim([time_min, time_max])
+            # time series -- pre filter
+            ax[c,0].grid(True)
+            ax[c,0].plot(time_domain, data[:,c], label="original", linewidth=1, color='tab:blue')
+            # styling
+            ax[c,0].set_ylabel("Signal Value")
+            ax[c,0].set_xlabel("Time (s)")
+            ax[c,0].set_title(f"Pre-filtered EMG", y=1.05)
+            ax[c,0].set_ylim([time_min, time_max])
+            # ax[c,0].grid(True)
+            # ax[c,0].plot(time_domain, data[:,c], label="original", linewidth=1)
+            # # styling
+            # ax[c,0].set_ylabel("Signal Value")
+            # ax[c,0].set_xlabel("Time (s)")
+            # ax[c,0].set_title(f"CH{c}, pre filter time series")
+            
+            # # time series -- pre filter
+            # ax[c,1].grid(True)
+            # ax[c,1].plot(time_domain, filtered_data[:,c], label="filtered", linewidth=1)
+            # # styling
+            # ax[c,1].set_ylabel("Signal Value")
+            # ax[c,1].set_xlabel("Time (s)")
+            # ax[c,1].set_title(f"CH{c}, post filter time series")
             
             # frequency domain -- pre filter
             ax[c,2].grid(True)
-            ax[c,2].plot(frequency_bins, frequency_domain_pre[:,c], label="original")
+            ax[c,2].plot(frequency_bins, frequency_domain_pre[:,c], label="original", linewidth=1, color='tab:blue')
+            ax[c,2].set_xlim([0, 300])
             # styling
             ax[c,2].set_ylabel("Frequency Energy")
-            ax[c,2].set_title(f"CH{c}, pre filter frequency domain")
+            ax[c,2].set_title(f"Pre-filter Frequency Domain", y=1.05)
+            #ax[c,2].set_title(f"CH{c}, pre filter frequency domain")
             ax[c,2].set_xlabel("Frequency (Hz)")
-
-            # frequency domain -- post filter
+            ax[c,2].set_ylim([freq_min, freq_max])
+            # frequency domain -- pre filter - post filter
             ax[c,3].grid(True)
-            ax[c,3].plot(frequency_bins, frequency_domain_post[:,c], label="filtered")
+            ax[c,3].plot(frequency_bins, frequency_domain_pre[:,c]-frequency_domain_post[:,c], label="filtered", linewidth=1, color='tab:blue')
+            ax[c,3].set_xlim([0, 300])
             # styling
             ax[c,3].set_ylabel("Frequency Energy")
-            ax[c,3].set_title(f"CH{c}, post filter frequency domain")
+            ax[c,3].set_title(f"Filtering Effect Frequency Domain", y=1.05)
+            #ax[c,3].set_title(f"CH{c}, difference between pre and post filter frequency domain")
             ax[c,3].set_xlabel("Frequency (Hz)")
+            ax[c,3].set_ylim([freq_min, freq_max])
+            # # frequency domain -- post filter
+            # ax[c,3].grid(True)
+            # ax[c,3].plot(frequency_bins, frequency_domain_post[:,c], label="filtered", linewidth=1)
+            # ax[c,3].set_xlim([0, 300])
+            # # styling
+            # ax[c,3].set_ylabel("Frequency Energy")
+            # ax[c,3].set_title(f"CH{c}, post filter frequency domain")
+            # ax[c,3].set_xlabel("Frequency (Hz)")
+
+        plt.tight_layout(rect=(0, 0, 1, 0.96))
+        if save_path is not None:
+            plt.savefig(save_path, bbox_inches='tight', format='pdf', dpi=300)
         plt.show()
 
     def get_frequency_domain(self, data):

@@ -45,12 +45,9 @@ class GUI:
                  debug=False,
                  gesture_width = 500,
                  gesture_height = 500,
-                 clean_up_on_kill=False,
-                 axis_media=None,       # Added by Rikke 11.05
-                 motor_functions=None): # Added by Rikke 11.05
+                 clean_up_on_kill=False
+                 ):
         
-        self.axis_media = axis_media            # Added by Rikke 11.05
-        self.motor_functions = motor_functions  # Added by Rikke 11.05
         self.width = width 
         self.height = height 
         self.debug = debug
@@ -121,7 +118,7 @@ class GUI:
                 # dpg.add_menu_item(label="Fitts Law", callback=self._fitts_law_callback)
     
     def _exit_window_callback(self):
-        #self.clean_up_on_kill = True
+        self.clean_up_on_kill = True
         dpg.stop_dearpygui()
     
     def _data_collection_callback(self):

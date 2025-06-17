@@ -21,7 +21,6 @@ from libemg.data_handler import OfflineDataHandler, RegexFilter
 from libemg.feature_extractor import FeatureExtractor
 from libemg.offline_metrics import OfflineMetrics
 from libemg.emg_predictor import EMGRegressor, OnlineEMGRegressor
-from libemg.training import TrainingProtocol
 
 class TrainAndCollectPanel:
     def __init__(self,
@@ -97,13 +96,13 @@ class TrainAndCollectPanel:
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
                         dpg.add_text("Rise Time:")
-                        dpg.add_input_text(default_value=1, tag="__dc_rise_time", width=100)
+                        dpg.add_input_int(default_value=1, tag="__dc_rise_time", width=100)
                     with dpg.group(horizontal=True):
                         dpg.add_text("Steady-State Time:")
-                        dpg.add_input_text(default_value=1, tag="__dc_steady_state_time", width=100)
+                        dpg.add_input_int(default_value=1, tag="__dc_steady_state_time", width=100)
                     with dpg.group(horizontal=True):
                         dpg.add_text("Rest Time:")
-                        dpg.add_input_text(default_value=1, tag="__dc_signal_rest_time", width=100)
+                        dpg.add_input_int(default_value=1, tag="__dc_signal_rest_time", width=100)
                 # FOLDER ROW
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
