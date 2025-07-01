@@ -45,7 +45,10 @@ class GUI:
                  debug=False,
                  gesture_width = 500,
                  gesture_height = 500,
-                 clean_up_on_kill=False
+                 clean_up_on_kill=False,
+                 regression_selected=False, # Added by Rikke, for the data_collection_panel
+                 motion_classes=None,       # Added by Rikke, for the data_collection_panel
+                 axis_media=None            # Added by Rikke, for the data_collection_panel
                  ):
         
         self.width = width 
@@ -56,6 +59,9 @@ class GUI:
         self.video_player_width = gesture_width
         self.video_player_height = gesture_height
         self.clean_up_on_kill = clean_up_on_kill
+        self.regression_selected = regression_selected # Added by Rikke, fo rthe data_collection_panel
+        self.motion_classes = motion_classes
+        self.axis_media = axis_media
         self._install_global_fields()
 
     def start_gui(self):

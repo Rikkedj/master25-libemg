@@ -333,7 +333,7 @@ class FeatureExtractor:
         return feat_a+feat_b
     
 
-    def getSSCfeat(self, windows,SSC_threshold=0.0):
+    def getSSCfeat(self, windows, SSC_threshold=0.0):
         """Extract Slope Sign Change (SSC) feature.
         
         Parameters

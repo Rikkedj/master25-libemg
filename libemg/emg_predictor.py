@@ -505,8 +505,6 @@ class EMGRegressor(EMGPredictor):
         deadband_mask = np.abs(predictions) < self.deadband_threshold
         predictions[deadband_mask] = 0.
 
-
-
         return predictions
     
     def install_filter(self, filter):

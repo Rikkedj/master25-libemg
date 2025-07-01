@@ -25,6 +25,19 @@ from libemg.feature_extractor import FeatureExtractor
 from libemg.shared_memory_manager import SharedMemoryManager
 from scipy.signal import welch
 from libemg.utils import get_windows, _get_fn_windows, _get_mode_windows, make_regex
+import matplotlib as mpl
+# Use LaTeX-style fonts
+mpl.rcParams.update({
+    "text.usetex": True,
+    "font.family": "serif",
+    "font.size": 15,
+    "axes.labelsize": 15,
+    "axes.titlesize": 15,
+    "legend.fontsize": 12,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "figure.dpi": 300
+})
 
 class RegexFilter:
     """
@@ -606,7 +619,7 @@ class OfflineDataHandler(DataHandler):
         fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 2.5 * rows), sharex=True)
 
         axes = np.atleast_2d(axes)  # Ensure axes is always 2D for consistent indexing
-        fig.suptitle(title, fontsize=16, fontweight='bold')
+        #fig.suptitle(title, fontsize=16, fontweight='bold')
 
         # Ensure axes is always 2D for consistent indexing
         color_map = plt.get_cmap("Pastel2")
@@ -661,16 +674,16 @@ class OfflineDataHandler(DataHandler):
                 class_names[class_val] = f"Class {class_val}"
             class_label = class_names[class_val] if class_idx < len(class_names) else f"Class str{class_val}"
             ax = axes[0][class_idx]
-            ax.set_title(class_label, fontsize=12, fontweight='bold')
+            ax.set_title(r"\textbf{" + class_label + "}", fontsize=15, fontweight='bold')
             if class_idx == 0: 
-                ax.set_ylabel("True Motion", fontsize=12, fontweight='bold')
+                ax.set_ylabel(r"\textbf{" + "True Motion" + "}", fontsize=15, fontweight='bold')
 
             for ch in range(num_channels):
                 ax = axes[ch+1][class_idx]
                 if class_idx == 0: 
-                    ax.set_ylabel(f"Ch {ch+1}", fontsize=12, fontweight='bold')
+                    ax.set_ylabel(f"Ch {ch+1}", fontsize=15, fontweight='bold')
                 if ch == num_channels - 1:
-                    ax.set_xlabel("Time [s]", fontsize=8)
+                    ax.set_xlabel("Time [s]", fontsize=15)
                 #if ch == 0:
                     #ax.set_title(class_label, fontsize=8)
 
@@ -732,7 +745,7 @@ class OfflineDataHandler(DataHandler):
             loc='upper center',
             bbox_to_anchor=(0.5, 0.95),  # center, slightly below the title
             ncol=min(max_reps_per_class, 6),
-            fontsize=8,
+            fontsize=12,
             frameon=False
         )
         plt.tight_layout(rect=[0, 0.06, 0.9, 0.94]) # left, bottom, right, top margins
@@ -1016,6 +1029,7 @@ class OnlineDataHandler(DataHandler):
         print("Analysis sucessfully complete. ODH process has stopped.")
 
     def visualize(self, num_samples=500, block=True):
+       
         """Visualize the incoming raw EMG in a plot (all channels together).
 
         Parameters
@@ -1040,13 +1054,13 @@ class OnlineDataHandler(DataHandler):
         def on_close(event):
             self.visualize_signal.set()
         fig.canvas.mpl_connect('close_event', on_close)
-        fig.suptitle('Raw Data', fontsize=16)
+        #fig.suptitle('Raw Data', fontsize=16)
         for i,mod in enumerate(self.modalities):
             num_channels = self.smm.get_variable(mod).shape[1]
             for j in range(0,num_channels):
                 plots.append(ax[i][0].plot([],[],label=mod+"_CH"+str(j+1)))
         
-        fig.legend()
+        #fig.legend()
         
         def update(frame):
             data, _ = self.get_data(N=0,filter=True)
@@ -1059,6 +1073,7 @@ class OnlineDataHandler(DataHandler):
                     data[mod] = data[mod][:num_samples,:]
                 if len(data[mod]) > 0:
                     x_data = list(range(0,data[mod].shape[0]))
+                    x_data = np.array(x_data)/2000  # Assuming a default sampling rate of 2000 Hz
                     num_channels = data[mod].shape[1]
                     for j in range(0,num_channels):
                         y_data = data[mod][:,j]
@@ -1067,7 +1082,9 @@ class OnlineDataHandler(DataHandler):
             for i in range(len(self.modalities)):
                 ax[i][0].relim()
                 ax[i][0].autoscale_view()
-                ax[i][0].set_title(self.modalities[i])
+                #ax[i][0].set_title(self.modalities[i])
+                ax[i][0].set_ylabel('V', fontsize=15)
+                ax[i][0].set_xlabel('Time (s)', fontsize=15)
             return plots,
     
         while True:

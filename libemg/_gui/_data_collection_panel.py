@@ -15,9 +15,7 @@ import matplotlib.pyplot as plt
 from libemg.data_handler import OfflineDataHandler, RegexFilter
 from libemg.feature_extractor import FeatureExtractor
 from libemg.filtering import Filter
-from libemg.offline_metrics import OfflineMetrics
-from libemg.emg_predictor import EMGRegressor, OnlineEMGRegressor
-
+from libemg.animator import ScatterPlotAnimator
 
 class DataCollectionPanel:
     def __init__(self,
@@ -47,7 +45,8 @@ class DataCollectionPanel:
                                              '__dc_auto_advance','__dc_rise_time', '__dc_steady_state_time'], #NOTE! Added signal times 10.05 
                             "collection":   ['__dc_collection_window', '__dc_prompt_spacer', '__dc_prompt', '__dc_progress', '__dc_redo_button'],
                             "visualization": ['__vls_visualize_window', '__dc_recent_data']}
-        
+        self.overwrite_flags = {}  # NEW: Track user choice for each motion class
+        self.pending_motion_classes = []  # NEW: Queue of motion classes to process
 
     def cleanup_window(self, window_name):
         widget_list = self.widget_tags[window_name]
@@ -65,9 +64,21 @@ class DataCollectionPanel:
             with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp,
                    borders_outerH=True, borders_innerV=True, borders_innerH=True, borders_outerV=True):
 
-                dpg.add_table_column(label="")
-                dpg.add_table_column(label="")
-                dpg.add_table_column(label="")
+                dpg.add_table_column(label="", init_width_or_weight=2.0)
+                dpg.add_table_column(label="", init_width_or_weight=1.0)
+                dpg.add_table_column(label="", init_width_or_weight=1.0)
+
+                # Check current mode at rendering time. This is to give different inputs depending on whether regression or classification is selected.
+                if self.gui and self.gui.regression_selected:
+                    rep_label = "Time to Max Contraction"
+                    rest_label = "Hold Duration at Max"
+                    rep_tag = "__dc_time_to_max"
+                    rest_tag = "__dc_hold_duration"
+                else:   
+                    rep_label = "Time Per Rep"
+                    rest_label = "Time Between Reps"
+                    rep_tag = "__dc_rep_time"
+                    rest_tag = "__dc_rest_time"
                 # REP ROW
                 with dpg.table_row(): 
                     with dpg.group(horizontal=True):
@@ -76,28 +87,15 @@ class DataCollectionPanel:
                                         tag="__dc_num_reps",
                                         width=100)
                     with dpg.group(horizontal=True):
-                        dpg.add_text("Time Per Rep")
+                        dpg.add_text(rep_label)
                         dpg.add_input_text(default_value=self.rep_time,
-                                        tag="__dc_rep_time",
+                                        tag=rep_tag,
                                         width=100)
                     with dpg.group(horizontal=True):
-                        dpg.add_text("Time Between Reps")
+                        dpg.add_text(rest_label)
                         dpg.add_input_text(default_value=self.rest_time,
-                                        tag="__dc_rest_time", 
+                                        tag=rest_tag,
                                         width=100)
-                # SIGNAL ROW - if training prompt is a real-time plot and not a video from animation (in regression)
-                # with dpg.table_row():
-                #     with dpg.group(horizontal=True):
-                #         dpg.add_text("Rise Time")
-                #         dpg.add_input_text(default_value=1.0,
-                #                         tag="__dc_rise_time",
-                #                         width=100)
-                #     with dpg.group(horizontal=True):
-                #         dpg.add_text("Steady State Time")
-                #         dpg.add_input_text(default_value=1.0,
-                #                         tag="__dc_steady_state_time",
-                #                         width=100)
-                
                 # FOLDER ROW
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
@@ -118,12 +116,121 @@ class DataCollectionPanel:
                 # BUTTON ROW
                 with dpg.table_row():
                     with dpg.group(horizontal=True):
+                        if self.gui.regression_selected:
+                            dpg.add_button(label="Create Training Animation", callback=self.create_animation_callback)
                         dpg.add_button(label="Start Training", callback=self.start_callback)
                         dpg.add_button(label="Show EMG signal", callback=self.visualize_callback)
         
         # dpg.set_primary_window("__dc_configuration_window", True)
 
-   
+    def create_animation_callback(self):
+        self.get_settings()
+        self.pending_motion_classes = list(self.gui.motion_classes.items())  # Always fresh start
+        self.process_next_motion_class()
+         
+    
+    def process_next_motion_class(self):
+        if not hasattr(self, "pending_motion_classes") or self.pending_motion_classes is None:
+            self.pending_motion_classes = list(self.gui.motion_classes.items())
+
+        if not self.pending_motion_classes:
+            print("All animations processed.")
+            self.pending_motion_classes = None  # Reset for next run
+            return
+
+        fps = 24
+        media_folder = Path(dpg.get_value("__dc_media_folder")).absolute()
+                
+        if not media_folder or not media_folder.exists():
+            raise FileNotFoundError(f"Media folder {media_folder} does not exist. Please specify a valid media folder.")
+         
+        print("Processing next motion class...")
+        motion_class, (x_factor, y_factor) = self.pending_motion_classes[0]
+        print(f"Processing motion class: {motion_class}")
+
+        output_filepath = media_folder / f'{motion_class}.mp4'
+
+        if output_filepath.exists():
+            print(f"Animation file for {motion_class} already exists at {output_filepath.as_posix()}.")
+           # popup_tag = "__dc_animation_exists_popup"
+            popup_tag = f"__dc_animation_exists_popup_{motion_class}"
+            if dpg.does_item_exist(popup_tag):
+                dpg.delete_item(popup_tag)
+
+            print(f"Showing popup for existing animation file: {output_filepath.as_posix()}")
+            with dpg.window(label="Animation Exists", modal=True, tag=popup_tag, no_resize=True, no_move=True):
+                dpg.add_text(f"Animation file for motion class '{motion_class}' already exists.", tag=f"{popup_tag}_text1")
+                dpg.add_text("Would you like to use the existing file or create a new one?", tag=f"{popup_tag}_text2")
+                dpg.add_button(label="Use Existing", callback=lambda: self.handle_popup_choice("use_existing", output_filepath=None, popup_tag=popup_tag), tag=f"{popup_tag}_btn1")
+                dpg.add_button(label="Create New", callback=lambda: self.handle_popup_choice("create_new", output_filepath=output_filepath, popup_tag=popup_tag), tag=f"{popup_tag}_btn2")
+            return
+        
+        # If no file exists, create it
+        self._create_animation_for_motion_class(motion_class, x_factor, y_factor, output_filepath, fps)
+
+
+    def handle_popup_choice(self, choice, output_filepath, popup_tag):
+        motion_class, (x_factor, y_factor) = self.pending_motion_classes[0]
+        fps = 24  # Default FPS for animation
+
+        # Close the popup first regardless of choice
+        if dpg.does_item_exist(popup_tag):
+            dpg.delete_item(popup_tag)
+            print(f"Popup {popup_tag} deleted")
+
+        if choice == "create_new":
+            print(f"Overwriting and creating new animation for {motion_class} at {output_filepath.as_posix()}")
+            self._create_animation_for_motion_class(motion_class, x_factor, y_factor, output_filepath, fps)
+
+        elif choice == "use_existing":
+            print(f"Using existing animation for {motion_class}.")
+            # Remove the processed motion class from the queue and continue
+            self.pending_motion_classes.pop(0)
+        
+            print(f"Removed {motion_class} from queue. Remaining motion classes: {len(self.pending_motion_classes)}")
+        
+            # Use frame callback to continue processing after popup is fully closed
+            #dpg.set_frame_callback(3, lambda: self.process_next_motion_class())
+            # Continue processing the next motion class
+            self.process_next_motion_class()
+        
+        #if dpg.does_item_exist("__dc_animation_exists_popup"):
+        #    dpg.delete_item("__dc_animation_exists_popup")
+    
+
+
+    def _create_animation_for_motion_class(self, motion_class, x_factor, y_factor, output_filepath, fps):
+        """Helper method to create animation for a motion class"""
+        print(f"Creating animation for {motion_class} at {output_filepath.as_posix()}")
+        base_motion = self._generate_sawtooth_signal(rise_time=self.rep_time, 
+                                                    hold_time=self.rest_time, 
+                                                    rest_time=0, 
+                                                    n_repeats=1, 
+                                                    sampling_rate=fps, 
+                                                    amplitude=1
+                                                    ) # 1 second rise time, 3 seconds rest time, 1 repeat, 24 fps
+        # Apply movement transformation
+        x_coords = x_factor * base_motion
+        y_coords = y_factor * base_motion
+
+        coordinates = np.stack((x_coords, y_coords), axis=1)
+
+        scatter_animator_x = ScatterPlotAnimator(output_filepath=output_filepath.as_posix(),
+                                                show_direction=True, 
+                                                show_countdown=True, 
+                                                axis_images=self.gui.axis_media, 
+                                                figsize=(10,10), 
+                                                normalize_distance=False, 
+                                                show_boundary=True, 
+                                                fps=fps
+                                                )# ,(tpd=5 this does not make any diffrence..)#, plot_line=True) # plot_line does not work
+        scatter_animator_x.save_plot_video(coordinates, title=f'Regression Training - {motion_class}', save_coordinates=True, verbose=True)
+
+        # Move to next motion class after creation
+        self.pending_motion_classes.pop(0)
+        self.process_next_motion_class()  # Continue to next motion class
+
+
     def start_callback(self):
         if not (self.gui.online_data_handler and sum(list(self.gui.online_data_handler.get_data()[1].values()))):
             raise ConnectionError('Attempted to start data collection, but data are not being received. Please ensure the OnlineDataHandler is receiving data.')
@@ -138,14 +245,59 @@ class DataCollectionPanel:
 
     def get_settings(self):
         self.num_reps      = int(dpg.get_value("__dc_num_reps"))
-        self.rep_time      = float(dpg.get_value("__dc_rep_time"))
-        self.rest_time     = float(dpg.get_value("__dc_rest_time"))
-        #self.rise_time     = float(dpg.get_value("__dc_rise_time"))
-        #self.steady_state_time = float(dpg.get_value("__dc_steady_state_time"))
         self.media_folder  = dpg.get_value("__dc_media_folder")
         self.data_folder = dpg.get_value("__dc_data_folder")
         self.auto_advance  = bool(dpg.get_value("__dc_auto_advance"))
+        if self.gui and self.gui.regression_selected:
+            # If regression is selected, we use different tags for rep time and rest time
+            self.rep_time = float(dpg.get_value("__dc_time_to_max"))
+            self.rest_time = float(dpg.get_value("__dc_hold_duration"))
+        else:
+            self.rep_time = float(dpg.get_value("__dc_rep_time"))
+            self.rest_time = float(dpg.get_value("__dc_rest_time"))
 
+    def _generate_sawtooth_signal(self, rise_time, hold_time, rest_time, n_repeats, sampling_rate, amplitude=1):
+        """
+        Generate a sawtooth signal that rises linearly over 'rise_time' seconds, then rests flat for 'rest_time' seconds.
+
+        Parameters
+        ----------
+        rise_time : float
+            Duration of the rising edge (in seconds).
+        rest_time : float
+            Duration of the rest period after each rise (in seconds).
+        n_repeats : int
+            Number of sawtooth cycles to generate.
+        sampling_rate : int
+            Samples per second (Hz).
+        amplitude : float
+            Peak value of the signal.
+
+        Returns
+        -------
+        signal : np.ndarray
+            The generated sawtooth signal.
+        time_vec : np.ndarray
+            Corresponding time vector in seconds.
+        """
+        # Number of samples for rise and rest
+        rise_samples = int(rise_time * sampling_rate)
+        hold_samples = int(hold_time * sampling_rate)
+        rest_samples = int(rest_time * sampling_rate)
+
+        # Create one cycle: rise + rest
+        rise_part = np.linspace(0, amplitude, rise_samples, endpoint=False)
+        hold_part = np.full(hold_samples, amplitude)
+        rest_part = np.zeros(rest_samples)
+
+        # One full cycle
+        cycle = np.concatenate([rise_part, hold_part, rest_part])
+
+        # Repeat the cycle
+        signal = np.tile(cycle, n_repeats)
+
+        return signal
+    
     def gather_media(self):
         # find everything in the media folder
         files = os.listdir(self.media_folder)
